@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}New Opportunity — Tandora{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Create New Opportunity</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">Record a job opening or freelance client requirement.</p>
+  </div>
+  <div class="actions">
+    <a href="/opportunities" class="btn btn-secondary">&larr; Back to Opportunities</a>
+  </div>
+</div>
+
+<div class="panel" style="max-width: 650px;">
+  <form action="/opportunities/new" method="POST">
+    <div class="form-group">
+      <label for="company_id">Target Organization *</label>
+      <select id="company_id" name="company_id" class="form-control" required>
+        <option value="">-- Select Company --</option>
+        {% for comp in companies %}
+          <option value="{{ comp.id }}" {% if selected_company_id == comp.id %}selected{% endif %}>{{ comp.name }} ({{ comp.type }})</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="title">Opportunity / Job Title *</label>
+      <input type="text" id="title" name="title" class="form-control" required placeholder="e.g. Senior DevOps Engineer or Cloud Architecture Consultant">
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="type">Type *</label>
+        <select id="type" name="type" class="form-control">
+          <option value="employment">Employment Opportunity</option>
+          <option value="freelance_prospect">Freelance Service Project</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="status">Initial Status *</label>
+        <select id="status" name="status" class="form-control">
+          <option value="active">Active</option>
+          <option value="paused">Paused</option>
+          <option value="closed">Closed</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="source_url">Source URL</label>
+      <input type="url" id="source_url" name="source_url" class="form-control" placeholder="https://linkedin.com/jobs/view/... or career page">
+    </div>
+
+    <div class="form-group">
+      <label for="description">Job Description / Scope Requirements</label>
+      <textarea id="description" name="description" class="form-control" rows="5" placeholder="Key responsibilities, tech stack, requirements..."></textarea>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Save Opportunity</button>
+  </form>
+</div>
+{% endblock %}
