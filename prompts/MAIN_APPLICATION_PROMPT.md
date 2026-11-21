@@ -2,7 +2,7 @@
 
 ## Instructions for the Implementing Agent
 
-You are a senior software engineer implementing the Tandora lead management and outreach application. This is a local, single-user application running on Windows 11. You must follow all documentation and rules defined in this project before writing any code.
+You are a senior software engineer implementing the Tandora lead management and personalized outreach application. This is a local-first, single-user application running on Windows 11. You must adhere strictly to all project specifications, architectural decisions, and operational constraints defined in this project before writing any code.
 
 ---
 
@@ -10,49 +10,46 @@ You are a senior software engineer implementing the Tandora lead management and 
 
 The project root is the currently opened workspace directory (`<workspace_root>`). Do not assume any specific absolute path, Windows username, or fixed host directory.
 
-Before writing any code, discover and read the project documentation located in the `docs/` directory relative to the workspace root, in this exact order:
+Before writing code for any stage, discover and read the complete documentation in `docs/` relative to the workspace root in this exact sequence:
 
-1. `docs/PROJECT_SPECIFICATION.md` — Understand functional/non-functional requirements, constraints, and scope.
-2. `docs/ARCHITECTURE.md` — Understand system architecture, components, and interactions.
-3. `docs/DATABASE_SCHEMA.md` — Understand the authoritative 17-table SQLite schema and data integrity rules.
-4. `docs/WORKFLOWS.md` — Understand the 12 operational user workflows.
-5. `docs/SECURITY_AND_COMPLIANCE.md` — Understand security standards, suppression rules, and audit logging.
-6. `docs/IMPLEMENTATION_ROADMAP.md` — Identify milestones, dependencies, and definitions of done.
-7. `docs/AGENT_INSTRUCTIONS.md` — Understand mandatory coding agent rules and operational constraints.
-
-Do not skip any document. They contain critical decisions that govern all implementation phases.
+1. `docs/PROJECT_SPECIFICATION.md` — Core requirements, scope, and acceptance criteria.
+2. `docs/ARCHITECTURE.md` — Component architecture, local web UI design, and data flows.
+3. `docs/DATABASE_SCHEMA.md` — Authoritative 21-table schema, deduplication rules, and data integrity constraints.
+4. `docs/WORKFLOWS.md` — 12 end-to-end user and system workflows.
+5. `docs/SECURITY_AND_COMPLIANCE.md` — Security, SHA-256 approval hashing, send attempts, and compliance.
+6. `docs/IMPLEMENTATION_ROADMAP.md` — 10 practical implementation stages (Stages 0 to 9).
+7. `docs/AGENT_INSTRUCTIONS.md` — Mandatory coding agent rules and operational constraints.
 
 ---
 
-## Step 2: Identify the Current Milestone
+## Step 2: Identify the Current Implementation Stage
 
 Consult `docs/IMPLEMENTATION_ROADMAP.md`. Inspect the current repository state:
-- Check existing directories and code in `backend/`.
-- Check existing Alembic migrations in `backend/alembic/versions/`.
-- Check existing test files in `backend/tests/`.
-- Check existing extension files in `extension/`.
+- Check existing directories and code in `backend/` and `extension/`.
+- Check applied Alembic migrations in `backend/alembic/versions/`.
+- Check existing automated test suites in `backend/tests/`.
 
 Determine:
-1. Which milestones are already complete (all code and passing tests present).
-2. Which milestone is next in sequence.
-3. What the current milestone's objective, dependencies, features, expected files, tests, and acceptance criteria are.
+1. Which stages are already complete (all code and passing tests present).
+2. Which stage is next in sequence (Stages 0 to 9).
+3. The exact objective, dependencies, features, expected files, tests, and acceptance criteria for that stage.
 
-**Never jump ahead. Never implement features across multiple milestones in a single turn.**
+**Never jump ahead. Never implement features across multiple stages in a single turn.**
 
 ---
 
 ## Step 3: Load Relevant Project Skills
 
-Project-level AI coding skills are stored as instruction files in the `skills/` directory relative to the workspace root. They are project documentation assets, not globally installed runtime extensions.
+Project-level AI coding skills are stored as instruction files in `skills/` relative to the workspace root. They are project documentation assets, not globally installed runtime extensions.
 
-Before implementing a milestone, read the corresponding skill files:
+Before implementing a stage, read the corresponding skill files:
 
 | Component / Task | Project Skill File |
 |------------------|--------------------|
 | Python backend architecture & coding standards | `skills/python-backend/SKILL.md` |
-| FastAPI routers, schemas, dependencies & API testing | `skills/fastapi-development/SKILL.md` |
+| FastAPI routers, Jinja2 templates, dependencies & testing | `skills/fastapi-development/SKILL.md` |
 | SQLite, SQLAlchemy 2.x, Alembic & transactions | `skills/sqlite-database/SKILL.md` |
-| Chrome Extension Manifest V3 & local capture | `skills/chrome-extension/SKILL.md` |
+| Chrome Extension Manifest V3 & DOM capture | `skills/chrome-extension/SKILL.md` |
 | Google Sheets API v4 bidirectional sync & conflicts | `skills/google-sheets-integration/SKILL.md` |
 | Reoon API email verification & catch-all gating | `skills/email-verification/SKILL.md` |
 | LLM provider abstraction (Gemini & Ollama) & drafting | `skills/llm-integration/SKILL.md` |
@@ -63,96 +60,99 @@ Before implementing a milestone, read the corresponding skill files:
 
 ---
 
-## Step 4: Implement the Current Milestone
+## Step 4: Implement the Current Stage
 
-Implement strictly the scoped milestone. Follow these non-negotiable rules:
+Implement strictly the scoped stage. Follow these core architectural standards:
 
-### Architecture Rules
-- Use Python 3.12+, FastAPI, SQLite, SQLAlchemy 2.x, Alembic, and APScheduler.
-- Use Chrome Extension Manifest V3 with vanilla JavaScript.
-- Maintain a local, single-user Windows 11 footprint.
-- Do not introduce Supabase, PostgreSQL, Docker, Redis, Celery, or cloud infrastructure.
-- The FastAPI application must bind exclusively to `127.0.0.1` (localhost only).
+### 1. Technology Stack Constraints
+- Python 3.12+, FastAPI, SQLite, SQLAlchemy 2.x, Alembic, APScheduler, and Chrome Extension Manifest V3 (vanilla JS).
+- Server-rendered local web UI using Jinja2 templates.
+- Bind exclusively to `127.0.0.1:8000`.
+- Do not introduce Supabase, PostgreSQL, Docker, Redis, Celery, Kubernetes, or cloud hosting.
 
-### Database Naming & Schema Standards
-`docs/DATABASE_SCHEMA.md` is the authoritative source for all database structures. All entities and code must match the canonical schema names exactly:
-- `companies`
-- `opportunities`
-- `contacts`
-- `contact_roles`
-- `email_addresses`
-- `email_verifications`
-- `opportunity_contacts`
-- `outreach_threads`
-- `drafts`
-- `approvals`
-- `outreach_events`
-- `followup_schedules`
-- `replies`
-- `bounces`
-- `sheets_sync_state`
-- `audit_log` (Note: Singular `audit_log`, never `audit_logs`. The table is strictly append-only; no UPDATE or DELETE operations permitted.)
-- `app_config`
+### 2. Database Schema Authority (21 Tables)
+`docs/DATABASE_SCHEMA.md` is the authoritative source for all database structures. All model definitions and code must match these exact names:
+`companies`, `opportunities`, `contacts`, `contact_roles`, `email_addresses`, `phone_numbers`, `email_verifications`, `captures`, `linkedin_posts`, `opportunity_contacts`, `outreach_threads`, `drafts`, `approvals`, `send_attempts`, `outreach_events`, `followup_schedules`, `replies`, `bounces`, `sheets_sync_state`, `audit_log`, `app_config`.
 
-**Suppression Handling Standard**:
-There is no separate `suppression_list` table. Suppression is tracked via:
-1. `contacts.suppressed`, `contacts.suppressed_reason`, and `contacts.suppressed_at`.
-2. `outreach_threads.status = 'suppressed'`.
-3. Bounce records in `bounces` and invalid/unknown statuses in `email_verifications`.
-4. Any suppression event is permanently recorded in `audit_log`.
+- **Audit Log**: Strictly singular `audit_log`. Append-only (no UPDATE or DELETE allowed).
+- **Suppression Handling**: Stored directly on entities (`contacts.suppressed`, `email_addresses.suppressed`, `companies.suppressed`) and logged in `audit_log`. No separate `suppression_list` table.
+- **SQLite Pragmas**: Always execute `PRAGMA foreign_keys = ON;` and `PRAGMA journal_mode = WAL;`.
 
-### Credential & Configuration Management Strategy
-- All sensitive credentials (API keys, passwords, tokens, secrets) must be loaded from environment variables using `python-dotenv`.
-- Never hard-code credentials in source code or committed artifacts.
-- Never expose secrets in application logs, error traces, or API responses.
-- Maintain `.env.example` documenting all required environment variable names without real values.
-- **Integration-Specific On-Demand Validation**:
-  - The application must start successfully even if external API credentials (such as Reoon, Gemini, or Zoho) are not yet configured.
-  - Each external integration must validate its specific credentials lazily when activated or when an operation requires it.
-  - An unconfigured integration must raise a clear, actionable error identifying the missing environment variable and explaining how to configure it.
-  - Unconfigured integrations must never prevent unrelated application functionality (e.g., a missing `REOON_API_KEY` must not block capturing opportunities, browsing companies, or running database migrations).
+### 3. Contact Deduplication Standards
+- **Primary Match**: Normalized LinkedIn URL (strip tracking params and trailing slashes; lowercase domain).
+- **Secondary Match**: Normalized email address (lowercase, trimmed).
+- **Cautious Matching**: First name + Last name + Company match without matching LinkedIn URL must be flagged for manual review (`duplicate_flag = 1`) rather than auto-merged.
+- **Channel Provenance**: Every email and phone number is stored as an independent record preserving `source` (`ContactOut`, `Apollo`, `LinkedIn`, `manual`, `website`), `source_url`, and `captured_at`.
 
-### Pre-Send Safety Validation (10 Mandatory Checks)
-Every outbound email dispatch must pass through a centralized guard enforcing all 10 checks using persistent database records (never relying exclusively on in-memory state):
+### 4. Chrome Extension Capture Scope
+- Supported page types: LinkedIn individual profiles, LinkedIn posts, LinkedIn company pages, job listings, and prospect websites.
+- **Post Author Separation**: Preserves post author as a potential decision-maker distinct from personal profile owners.
+- **ContactOut & Apollo Integration**: Extracts visible overlay data in active tab DOM when accessible; provides an intuitive manual paste-and-parse fallback form when panels are isolated.
+- **Least-Privilege Security**: Permissions restricted to `activeTab`, `scripting`, `storage`, and host permission `http://127.0.0.1:8000/*` only. No `<all_urls>`.
+- **Review Before Submit**: All extracted data displayed in editable popup form before submission.
 
-1. **Exact Version Approval**: A valid `approvals` record exists referencing the exact current `draft_id` (`approvals.draft_id == draft.id`).
-2. **Global Pause Disabled**: The global pause setting in `app_config` is disabled (`sending_paused == 'false'`).
-3. **Daily Quota Available**: The global daily sending limit in `app_config` (maximum 20 messages globally) has not been exceeded, verified by counting today's persistent records in `outreach_events`.
-4. **Contact Not Suppressed**: The recipient contact is active (`contacts.suppressed == 0`).
-5. **Address Not Suppressed**: The selected email address is not suppressed (no associated hard bounce record in `bounces`).
-6. **Verification Eligibility**: The email address has a valid verification record in `email_verifications` with an eligible status (`safe` or approved `catch-all`).
-7. **Catch-All Approval**: If the address verification status is `catch-all`, it has a separate, explicit manual approval (`catch_all_approved == 1`).
-8. **No Duplicate Recipient**: The recipient has not already been sent an identical outreach message (no existing `outreach_events` record for the same thread and event/followup type).
-9. **Thread Eligibility**: The parent outreach thread is active and eligible (`outreach_threads.status` is not `suppressed`, `replied`, `bounced`, or `closed`).
-10. **Content Integrity**: The draft content (subject and body) has not been altered or tampered with since the approval was recorded.
+### 5. Approval Content Integrity (SHA-256)
+- Approvals must calculate and store a SHA-256 hash:
+  $$\text{approved\_content\_hash} = \text{SHA256}(\text{recipient\_address} + \text{"\textbackslash n"} + \text{subject} + \text{"\textbackslash n"} + \text{body} + \text{"\textbackslash n"} + \text{str(draft\_id)} + \text{"\textbackslash n"} + \text{str(version)})$$
+- Immediately before delivery, recalculate the hash from the current draft and verify an exact match.
+- Any draft edit creates a new version (`is_edited = 1`), automatically invalidating previous approvals.
 
-If any check fails:
-- Block outbound sending immediately.
-- Record the blocking event and specific reason in `audit_log`.
-- Do not increment the daily sending quota.
+### 6. Email Delivery Reliability & Persistent Send Attempts
+- Outbound delivery follows the persistent state machine: `pending` $\rightarrow$ `sending` $\rightarrow$ `sent` / `failed` / `unknown`.
+- Persist `send_attempts` record and commit database transaction *before* opening SMTP socket.
+- Never auto-resend an `unknown` attempt; require manual user reconciliation.
+- Enforce unique idempotency keys per thread action.
+- Serialize delivery operations using an in-process concurrency lock.
+- Default to `DRY_RUN = true` until live sending is explicitly configured.
+- Global daily limit: maximum 20 messages per day globally (initial + follow-ups combined).
 
-### Code Quality & Testing Rules
-- Every Python function must have complete type hints.
-- Use Pydantic schemas for all API request and response models.
+### 7. 10 Mandatory Pre-Send Checks
+Before every outbound email dispatch, verify all 10 checks against persistent database records:
+1. Exact version approval exists in `approvals`.
+2. Global pause toggle is disabled (`sending_paused == 'false'`).
+3. Daily quota available ($< 20$ sent today).
+4. Contact is not suppressed (`contacts.suppressed == 0`).
+5. Selected address is not suppressed (`email_addresses.suppressed == 0` and no hard bounce in `bounces`).
+6. Email verification status is eligible (`safe` or approved `catch-all`).
+7. Catch-all address has separate explicit approval (`catch_all_approved == 1`).
+8. Recipient has not already been sent an identical outreach message.
+9. Outreach thread is eligible (not `suppressed`, `replied`, `bounced`, or `closed`).
+10. Draft content SHA-256 hash matches `approvals.approved_content_hash`.
+
+### 8. Database-Driven Scheduler Recovery
+- Follow-up schedules (days 3, 7, 14) are stored authoritatively in SQLite (`followup_schedules`).
+- On application startup, scan SQLite for pending or overdue tasks, re-verify thread eligibility and pre-send rules, and resume safely without creating duplicate messages.
+
+### 9. Credential Management & On-Demand Validation
+- Load configuration from environment variables via `python-dotenv`.
+- Unconfigured integrations must not crash application startup.
+- Validate integration credentials lazily on-demand when invoked.
+- Maintain `.env.example` documenting all required variable names without real values.
+
+### 10. Code Quality & Automated Testing
+- Complete type hints on every Python function.
+- Pydantic models for all API request/response schemas.
 - Use Python's standard `logging` module. No `print()` calls in production code.
-- Write unit, API, and integration tests in the same milestone as the feature.
-- Mock all external third-party services (Reoon, Gemini, Ollama, Zoho SMTP/IMAP, Google Sheets) during automated testing. Never trigger real API calls or outbound emails in automated tests.
-- Verify that previous milestone tests continue to pass without regressions.
+- Write unit, API, and integration tests in the same stage as the feature.
+- Mock all external services (Reoon, Gemini, Ollama, Zoho SMTP/IMAP, Google Sheets). Never make real API calls or outbound emails in automated tests.
 
 ---
 
-## Step 5: Complete Milestone and Pause for Review
+## Step 5: Complete Stage and Pause for Review
 
-When all tasks and acceptance criteria of the current milestone are completed:
+When all tasks and acceptance criteria of the current stage are met:
 
 1. Run the full test suite: `pytest backend/tests/ -v`.
 2. Confirm all tests pass.
 3. Prepare a concise completion report detailing:
-   - Specific features and modules implemented.
+   - **Implemented**: Fully written, tested, and verified features.
+   - **Partially Implemented**: Features with known limitations.
+   - **Planned**: Features scoped for future stages.
+   - **Blocked**: Items awaiting user input.
    - Files created or modified.
    - Tests executed and coverage summary.
-   - Any assumptions made or decisions requiring user attention.
-4. **Stop execution completely.** Do not proceed to the next milestone until the user reviews and confirms.
+   - Any assumptions made.
+4. **Stop execution completely.** Do not proceed to the next stage until the user reviews and confirms.
 
 ---
 
@@ -160,11 +160,11 @@ When all tasks and acceptance criteria of the current milestone are completed:
 
 All project documentation is located in `docs/` relative to the workspace root:
 - `docs/PROJECT_SPECIFICATION.md` — Product scope, use cases, requirements.
-- `docs/ARCHITECTURE.md` — Technical architecture, components, data flows.
-- `docs/DATABASE_SCHEMA.md` — Authoritative 17-table schema, integrity rules.
+- `docs/ARCHITECTURE.md` — Architecture, local web UI, component diagrams.
+- `docs/DATABASE_SCHEMA.md` — Authoritative 21-table schema, integrity rules.
 - `docs/WORKFLOWS.md` — 12 end-to-end user workflows.
 - `docs/SECURITY_AND_COMPLIANCE.md` — Security, suppression, 10-point send checklist.
-- `docs/IMPLEMENTATION_ROADMAP.md` — 12-milestone phased plan (M0–M11).
+- `docs/IMPLEMENTATION_ROADMAP.md` — 10-stage phased plan (Stages 0 to 9).
 - `docs/AGENT_INSTRUCTIONS.md` — Mandatory coding agent guidelines.
 
-All project skill guides are located in `skills/` relative to the workspace root.
+All 11 project skill guides are located in `skills/` relative to the workspace root.
