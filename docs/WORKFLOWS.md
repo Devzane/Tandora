@@ -2,349 +2,339 @@
 
 ## Overview
 
-This document describes the complete user workflows supported by the Tandora application. Each workflow maps to a sequence of API calls, database operations, and user decisions.
-
-Actors:
-- **User**: The single human operator of the system.
-- **Backend**: The FastAPI application.
-- **Extension**: The Chrome Extension.
-- **LLM**: Gemini API or Ollama.
-- **Reoon**: Reoon Email Verifier API.
-- **Zoho**: Zoho SMTP/IMAP services.
-- **Sheets**: Google Sheets API.
+This document specifies the complete user and system workflows for Tandora. Each workflow defines the exact interaction sequence across the Chrome Extension, Local Web UI, FastAPI backend, SQLite database, and external integrations.
 
 ---
 
-## Workflow 1: Capture a Job Opportunity
+## Workflow 1: Capture a LinkedIn Individual Profile
 
-**Purpose**: Record a new job opportunity discovered during browser-based research.
+**Purpose**: Extract structured prospect and organization data while browsing an individual's LinkedIn profile.
 
 ```mermaid
 flowchart TD
-    A[User browses a job listing in Chrome] --> B[User activates Chrome Extension]
-    B --> C[Extension captures: URL, page title, selected text]
-    C --> D[User annotates: company name, job title, notes]
-    D --> E[Extension POSTs to /captures]
-    E --> F{Company already exists?}
-    F -->|No| G[Backend creates Company record]
-    F -->|Yes| H[Backend links to existing Company]
-    G --> I[Backend creates Opportunity record - type: employment]
-    H --> I
-    I --> J[Audit log: opportunity_captured]
-    J --> K[Extension shows success confirmation]
+    A[User opens LinkedIn profile in Chrome] --> B[User triggers extension via Alt+Shift+T or popup icon]
+    B --> C[Extension injects activeTab content script]
+    C --> D[Script extracts visible DOM fields: full_name, headline, current_company, title, location, linkedin_url]
+    D --> E[Popup pre-fills extracted data into editable fields]
+    E --> F[User verifies details, selects Opportunity Type, adds notes]
+    F --> G[User clicks 'Capture Prospect']
+    G --> H[POST /api/v1/captures with X-Extension-Secret]
+    H --> I[Backend normalizes LinkedIn URL - strip params and trailing slash]
+    I --> J[Insert raw capture record into captures table]
+    J --> K{Contact with normalized LinkedIn URL exists?}
+    K -->|Yes| L[Update existing Contact & link new Opportunity]
+    K -->|No| M[Create new Contact record]
+    L --> N[Return created/updated Contact ID to extension]
+    M --> N
+    N --> O[Extension displays green success state with link to Local UI]
 ```
 
 **Steps**:
-1. User is on a job listing page in Chrome.
-2. User activates the extension (keyboard shortcut or toolbar button).
-3. Extension captures current URL, page title, and optionally selected text.
-4. User reviews the captured data in the extension popup. Can edit company name, job title, and add notes.
-5. User submits. Extension POSTs to `POST /api/v1/captures`.
-6. Backend searches for an existing company by name (case-insensitive).
-7. If found: link the opportunity to the existing company.
-8. If not found: create a new Company record.
-9. Create an Opportunity record with `type = 'employment'`, `status = 'active'`.
-10. Write audit log entry: `opportunity_captured`.
-11. Extension receives success response and displays confirmation.
-
-**Result**: A Company and an Opportunity record exist in the database.
-
----
-
-## Workflow 2: Capture a Freelance Prospect
-
-**Purpose**: Record a company identified as a potential freelance client.
-
-**Steps**:
-1. User is on the company's website or LinkedIn page in Chrome.
-2. User activates the extension.
-3. Extension captures URL, page title, selected text.
-4. User annotates: company name, service need description, notes.
-5. Extension POSTs to `POST /api/v1/captures` with `opportunity_type = 'freelance_prospect'`.
-6. Backend creates or links Company record.
-7. Backend creates Opportunity with `type = 'freelance_prospect'`, `status = 'active'`.
-8. Write audit log entry: `opportunity_captured`.
-
-**Result**: A Company and freelance Opportunity record exist.
+1. User navigates to a LinkedIn profile (e.g. `https://www.linkedin.com/in/janedoe/`).
+2. User triggers the Tandora extension popup via keyboard shortcut (`Alt+Shift+T`) or toolbar icon.
+3. Content script reads visible profile elements:
+   - Full Name, First Name, Last Name.
+   - Headline / Current Job Title.
+   - Current Company / Organization Name.
+   - Company Website (if linked).
+   - Location.
+   - LinkedIn Profile URL.
+4. Popup pre-populates extracted fields in an editable review form.
+5. User selects opportunity intent: `employment` (e.g. hiring manager/recruiter) or `freelance_prospect` (e.g. potential client).
+6. User clicks **"Capture Prospect"**.
+7. Extension submits JSON payload to `POST /api/v1/captures` with `X-Extension-Secret`.
+8. Backend canonicalizes the LinkedIn URL and evaluates deduplication rules.
+9. Database commits records in `captures`, `companies`, `contacts`, and `opportunities`.
+10. Extension displays success confirmation.
 
 ---
 
-## Workflow 3: Capture Decision-Makers
+## Workflow 2: Capture a LinkedIn Post (Author & Context)
 
-**Purpose**: Add contacts (recruiters, founders, CTOs, hiring managers) to a company.
-
-**Steps**:
-1. User identifies a relevant person via LinkedIn, company website, or the job listing.
-2. User calls `POST /api/v1/companies/{company_id}/contacts` with:
-   - `first_name`, `last_name`
-   - `linkedin_url` (if available)
-   - `notes`
-3. Backend applies deduplication check (see DATABASE_SCHEMA.md § 5.1).
-4. If contact already exists: return existing contact ID.
-5. If new: create Contact record.
-6. User optionally links the contact to a specific opportunity: `POST /api/v1/opportunities/{opportunity_id}/contacts/{contact_id}`.
-7. Write audit log entry: `contact_added`.
-
-**Deduplication**: If a contact with the same name already exists at the company, the backend returns the existing record and informs the user.
-
----
-
-## Workflow 4: Store Multiple Contact Roles
-
-**Purpose**: Record the roles a contact holds (e.g., a person may be both Founder and CTO).
-
-**Steps**:
-1. User calls `POST /api/v1/contacts/{contact_id}/roles` with `role` value.
-2. Supported role values: `Recruiter`, `Hiring Manager`, `CTO`, `Founder`, `CEO`, `VP Engineering`, `Head of Product`, `Other`.
-3. Backend checks for duplicate role (unique constraint: `contact_id + role`).
-4. If not duplicate: insert `contact_roles` record.
-5. Response includes the full list of roles for the contact.
-
----
-
-## Workflow 5: Store Multiple Email Addresses
-
-**Purpose**: Associate one or more email addresses with a contact.
-
-**Steps**:
-1. User calls `POST /api/v1/contacts/{contact_id}/emails` with `address` and optional `source` and `is_primary` flag.
-2. Backend checks the unique constraint on `email_addresses.address`.
-3. If the address already exists for a different contact: return a conflict warning (do not silently reassign).
-4. If valid: insert `email_addresses` record.
-5. If `is_primary = true`, clear `is_primary` on other addresses for the same contact.
-6. Response includes all email addresses for the contact.
-
----
-
-## Workflow 6: Verify Email Addresses via Reoon
-
-**Purpose**: Check the deliverability of a contact's email addresses before outreach.
+**Purpose**: Capture a hiring announcement or business opportunity post from LinkedIn, preserving the author as a decision-maker without conflating the post with a personal profile.
 
 ```mermaid
 flowchart TD
-    A[User requests verification for email address] --> B[Backend checks recent verification cache]
-    B --> C{Already verified recently?}
-    C -->|Yes, still valid| D[Return cached result]
-    C -->|No or expired| E[Backend calls Reoon API]
-    E --> F{Reoon response}
-    F -->|safe| G[Mark address as safe - ready for outreach]
-    F -->|catch-all| H[Mark as catch-all - flag for manual review]
-    F -->|invalid| I[Mark as invalid - block from outreach]
-    F -->|unknown| J[Mark as unknown - block from outreach]
-    G --> K[Store verification result]
-    H --> K
-    I --> K
-    J --> K
-    K --> L[Update credits_used]
-    L --> M[Write audit log: email_verified]
-```
-
-**Steps**:
-1. User calls `POST /api/v1/emails/{email_address_id}/verify`.
-2. Backend checks for an existing, non-expired `email_verifications` record for this address.
-3. If a valid cached result exists, return it without calling Reoon.
-4. Otherwise, call the Reoon API.
-5. Store the result in `email_verifications`.
-6. If `status = 'catch-all'`, set `catch_all_approved = 0` (requires explicit user approval before use).
-7. Record credits consumed.
-8. Write audit log entry: `email_verified`.
-9. Return the verification result to the user.
-
-**Catch-all approval**: The user must explicitly call `POST /api/v1/emails/{email_address_id}/approve-catchall` to allow use of a catch-all address. This sets `catch_all_approved = 1` and writes an audit log entry.
-
----
-
-## Workflow 7: Generate Email Drafts
-
-**Purpose**: Use an LLM to generate a personalized email draft for a contact/opportunity pair.
-
-```mermaid
-flowchart TD
-    A[User requests draft generation] --> B[Backend validates: thread exists]
-    B --> C{Selected address verified and usable?}
-    C -->|No| D[Return error: address not ready]
-    C -->|Yes| E[Backend assembles context]
-    E --> F[Context: company name, type, opportunity title, description]
-    F --> G[Context: contact name, roles, notes]
-    G --> H[Backend calls LLM provider with prompt template]
-    H --> I{LLM response valid?}
-    I -->|No| J[Return generation error to user]
-    I -->|Yes| K[Store draft as new version]
-    K --> L[Write audit log: draft_generated]
-    L --> M[Return draft to user for review]
-```
-
-**Steps**:
-1. User calls `POST /api/v1/outreach-threads/{thread_id}/drafts/generate`.
-2. Backend retrieves the outreach thread, opportunity, company, and contact data.
-3. Backend validates that the selected email address has a usable verification status (safe, or catch-all with approval).
-4. Backend constructs the LLM prompt using a configured template. Context includes:
-   - Company name, website, description
-   - Opportunity title and description
-   - Contact first name, roles, notes
-   - User's professional context (from app config)
-5. Backend calls the configured LLM provider (Gemini or Ollama).
-6. If generation fails: return error. Do not create a draft record.
-7. If successful: create a new `drafts` record. Version is incremented from the last version for this thread + draft_type.
-8. Write audit log entry: `draft_generated`.
-9. Return draft content (subject + body) with version number.
-
-**Version increment rule**: Each new generation creates version N+1. The highest version is the current draft. Previous versions are retained for audit.
-
----
-
-## Workflow 8: Approve Email Drafts
-
-**Purpose**: Allow the user to review and approve a draft before it can be sent.
-
-**Steps**:
-1. User reviews the draft content (via API response or Google Sheets).
-2. User may optionally edit the draft:
-   - Call `PUT /api/v1/drafts/{draft_id}` with modified subject/body.
-   - Backend creates a new draft version with `is_edited = 1`.
-   - The old draft version is retained.
-3. User approves the current draft:
-   - Call `POST /api/v1/drafts/{draft_id}/approve`.
-4. Backend validates: draft exists, belongs to the thread, is the current version.
-5. Backend creates an `approvals` record for the draft.
-6. Backend updates `outreach_threads.status` to `approved`.
-7. Write audit log entry: `draft_approved`.
-8. Return approval confirmation.
-
-**Constraint**: Only the current (highest-version) draft for a given thread + draft_type combination may be approved. Approving an older version is rejected.
-
----
-
-## Workflow 9: Send Approved Emails
-
-**Purpose**: Dispatch an approved email via Zoho SMTP.
-
-```mermaid
-flowchart TD
-    A[Scheduler or user triggers send] --> B{Global pause active?}
-    B -->|Yes| C[Abort: system paused]
-    B -->|No| D{Daily limit reached?}
-    D -->|Yes| E[Abort: quota exhausted]
-    D -->|No| F{Valid approval record for draft?}
-    F -->|No| G[Abort: no approval]
-    F -->|Yes| H{Contact suppressed?}
-    H -->|Yes| I[Abort: contact suppressed]
-    H -->|No| J{Address verification status OK?}
-    J -->|No| K[Abort: address not safe]
-    J -->|Yes| L[Send via Zoho SMTP]
-    L --> M[Record outreach_event]
-    M --> N[Increment daily count]
-    N --> O[Schedule follow-ups for days 3, 7, 14]
-    O --> P[Write audit log: email_sent]
-```
-
-**Pre-send checks** (all 10 must pass against persistent database records):
-1. A valid approval exists for the exact current draft version (`approvals.draft_id == draft.id`).
-2. The global pause flag is disabled (`app_config.sending_paused == 'false'`).
-3. The global daily sending quota has not been exceeded (< 20 messages today counted from `outreach_events`).
-4. The contact is not suppressed (`contacts.suppressed == 0`).
-5. The selected email address is not suppressed (no hard bounce record in `bounces`).
-6. The email address meets its verification eligibility requirements (`safe` or approved `catch-all`).
-7. Catch-all addresses have separate explicit manual approval (`catch_all_approved == 1`).
-8. The recipient is not a duplicate of an already processed outbound message.
-9. The outreach thread is still eligible for sending (not suppressed, replied, bounced, or closed).
-10. The message content has not changed since approval was granted.
-
-**Steps**:
-1. All pre-send checks pass.
-2. Backend sends the email via Zoho SMTP, using the approved draft's subject and body.
-3. The `Message-ID` header is captured from the SMTP response.
-4. Create `outreach_events` record.
-5. Increment the daily sent count.
-6. Create `followup_schedules` records for days 3, 7, and 14 (relative to today's date).
-7. Update `outreach_threads.status` to `sent`.
-8. Write audit log entry: `email_sent`.
-
----
-
-## Workflow 10: Monitor Replies and Bounces
-
-**Purpose**: Detect inbound replies and bounce notifications from the Zoho mailbox.
-
-**Steps** (run on a polling schedule, e.g., every 15 minutes):
-1. Backend connects to Zoho IMAP.
-2. Fetches unread messages in the inbox and delivery failure folders.
-3. For each message, extracts `Message-ID`, `In-Reply-To`, `From`, and `Subject` headers.
-4. **Reply detection**: If `In-Reply-To` matches a known `outreach_events.message_id`:
-   - Create a `replies` record linked to the outreach thread.
-   - Update `outreach_threads.status` to `replied`.
-   - Suppress all pending follow-ups for this thread (set `followup_schedules.status = 'suppressed'`, `suppressed_reason = 'reply_received'`).
-   - Write audit log: `reply_received`, `followup_suppressed`.
-5. **Bounce detection**: If the message is a Delivery Status Notification (DSN):
-   - Extract the bounced address from the DSN.
-   - Find the matching `email_addresses` record.
-   - Create a `bounces` record.
-   - Update the `email_addresses` record with a bounce flag.
-   - Write audit log: `bounce_detected`.
-6. Mark processed messages as read in IMAP.
-
----
-
-## Workflow 11: Generate and Approve Follow-ups
-
-**Purpose**: Create and approve follow-up emails for threads that have not received a reply.
-
-**Steps**:
-1. The scheduler identifies `followup_schedules` records where:
-   - `scheduled_date <= today`
-   - `status = 'pending'`
-   - The parent `outreach_threads.status` is `sent` (not `replied`, `bounced`, or `suppressed`)
-2. For each due follow-up, the scheduler triggers draft generation:
-   - Calls the LLM with follow-up context (original email summary, follow-up number, days elapsed).
-   - Creates a new `drafts` record with `draft_type = 'followup'` and `followup_number`.
-   - Updates `followup_schedules.status = 'draft_ready'`.
-3. The user is notified (via API query) that follow-up drafts are ready for review.
-4. User reviews and approves each follow-up draft independently (same as Workflow 8).
-5. Once approved, the follow-up is dispatched on the next scheduler run (same pre-send checks as Workflow 9).
-6. Write audit log: `followup_sent`.
-
-**Rule**: If a reply is received between follow-up generation and approval, the follow-up must be suppressed before sending.
-
----
-
-## Workflow 12: Synchronize Google Sheets
-
-**Purpose**: Manually sync data between the SQLite database and a configured Google Sheets spreadsheet.
-
-```mermaid
-flowchart TD
-    A[User triggers sync via API] --> B[Backend reads last-sync state from sheets_sync_state]
-    B --> C[Backend fetches current data from Google Sheets]
-    C --> D[Backend reads current data from SQLite]
-    D --> E[Compare records by external_id]
-    E --> F{Changes in Sheets only?}
-    F -->|Yes| G[Apply changes to SQLite]
-    E --> H{Changes in SQLite only?}
-    H -->|Yes| I[Apply changes to Sheets]
-    E --> J{Changes in both sources?}
-    J -->|Yes| K[Record conflict - surface to user]
-    G --> L[Update last-sync timestamp]
-    I --> L
+    A[User views a LinkedIn post] --> B[User activates Tandora Extension]
+    B --> C[Extension detects post container]
+    C --> D[Extracts post author name, author LinkedIn URL, headline, post URL, post excerpt, timestamp]
+    D --> E[Popup classifies as 'LinkedIn Post Capture']
+    E --> F[User reviews post context and designates author role]
+    F --> G[POST /api/v1/captures payload including post sub-object]
+    G --> H[Backend records Capture and inserts linkedin_posts record]
+    H --> I{Create Contact for Post Author?}
+    I -->|Yes| J[Create/match Contact for Author & link to linkedin_posts]
+    I -->|No| K[Store post solely as opportunity context]
+    J --> L[Create Opportunity linked to author and company]
     K --> L
-    L --> M[Write audit log: sync_completed]
-    M --> N[Return sync report to user]
+    L --> M[Write audit_log: post_captured]
 ```
 
 **Steps**:
-1. User calls `POST /api/v1/sync/sheets`.
+1. User views a post on LinkedIn (e.g. a CTO posting *"We're hiring a Senior DevOps Engineer"*).
+2. User activates the Tandora extension.
+3. Content script identifies post container and extracts:
+   - Post author full name.
+   - Author LinkedIn URL.
+   - Author headline.
+   - Post canonical URL and timestamp.
+   - Post text body / excerpt.
+   - Mentioned organizations.
+4. Popup displays extracted post context and pre-fills an Opportunity title (e.g., *"Hiring DevOps Engineer"*).
+5. User confirms whether the author should be registered as a decision-maker contact.
+6. Extension submits payload to `POST /api/v1/captures`.
+7. Backend inserts a `captures` record and a child `linkedin_posts` record, linking the author to `contacts` and creating the associated `opportunities` record.
+
+---
+
+## Workflow 3: Capture Visible Third-Party Overlays (ContactOut & Apollo)
+
+**Purpose**: Capture contact information displayed by user's installed third-party extensions when rendered in the active page DOM.
+
+**Compliance & Boundary Rules**:
+- *No undocumented API calls, no token scraping, no server-side crawling.*
+- *Read only visibly rendered DOM elements in the active browser tab.*
+
+```mermaid
+flowchart TD
+    A[User opens LinkedIn profile or company site] --> B[User manually opens ContactOut or Apollo panel]
+    B --> C[Provider renders visible email/phone information]
+    C --> D[User opens Tandora Extension]
+    D --> E{Are overlay elements accessible in active DOM?}
+    E -->|Yes| F[Content script extracts visible emails, phones, names]
+    E -->|No / Shadow DOM| G[Manual Fallback: User copies text from overlay into Tandora form]
+    F --> H[Tandora parser detects provider source: ContactOut or Apollo]
+    G --> H
+    H --> I[Popup displays extracted emails and phones with individual provenance tags]
+    I --> J[User verifies details and clicks Save]
+    J --> K[POST /api/v1/captures with emails and phone numbers arrays]
+    K --> L[Backend inserts distinct email_addresses and phone_numbers with source metadata]
+```
+
+**Steps**:
+1. User browses to a prospect profile and manually opens the ContactOut or Apollo.io overlay.
+2. The third-party extension displays work emails, personal emails, or direct phone numbers.
+3. User opens the Tandora extension.
+4. Tandora attempts to read visible overlay elements in the active tab.
+5. If accessible: Tandora extracts contact strings and tags the source as `ContactOut` or `Apollo`.
+6. **Manual Fallback**: If the provider panel is isolated inside a closed shadow root or iframe:
+   - User highlights and copies the text from the provider panel.
+   - User pastes the text into Tandora's popup **"Quick Import / Paste"** box.
+   - Client-side parser extracts email patterns, phone patterns, and names into structured fields.
+7. User reviews the structured emails and phone numbers.
+8. Extension submits to `POST /api/v1/captures`.
+9. Backend saves each email address in `email_addresses` and each phone number in `phone_numbers` as an independent record with `source = 'ContactOut'` or `source = 'Apollo'`, `source_url`, and `captured_at`.
+
+---
+
+## Workflow 4: Manage Records via Local Web UI
+
+**Purpose**: Manage organizations, opportunities, contacts, and deliverability from the local server-rendered web application.
+
+**Steps**:
+1. User navigates to `http://127.0.0.1:8000/` in Chrome.
+2. **Dashboard**: User checks key counts (total prospects, pending drafts, unapproved catch-alls, sent today out of 20).
+3. **Organizations**: User views organization list, adds descriptions, edits websites, or flags organization-level suppression.
+4. **Contacts**: User views contacts, inspects normalized LinkedIn URLs, reviews duplicate warning flags (`duplicate_flag = 1`), and merges or approves distinct identities.
+5. **Emails & Phones**: User inspects contact channels, viewing provenance tags (`ContactOut`, `Apollo`, etc.) and verified deliverability badges.
+6. **Global Controls**: User can toggle the global pause switch with one click.
+
+---
+
+## Workflow 5: Email Verification via Reoon
+
+**Purpose**: Verify deliverability and enforce catch-all review before draft generation.
+
+```mermaid
+flowchart TD
+    A[User clicks 'Verify' in Local UI or API] --> B[Check email_verifications for address within 30 days]
+    B --> C{Valid cached result exists?}
+    C -->|Yes| D[Return cached status with expiry timestamp]
+    C -->|No| E[Call Reoon API mode=power with REOON_API_KEY]
+    E --> F[Parse Reoon status: safe, catch_all, invalid, unknown, role_account, disposable]
+    F --> G[Insert record into email_verifications with 30-day expires_at]
+    G --> H{Status classification}
+    H -->|safe| I[Mark address eligible for outreach]
+    H -->|catch-all| J[Hold address: require explicit catch_all_approved = 1]
+    H -->|invalid / unknown / disposable| K[Permanently block address from outreach]
+    I --> L[Write audit_log: email_verified]
+    J --> L
+    K --> L
+```
+
+**Steps**:
+1. User triggers verification for an email address in the Local UI or via API `POST /api/v1/emails/{id}/verify`.
+2. Backend checks `email_verifications` for a cached result from the last 30 days. If found, returns cache immediately.
+3. If uncached, backend calls the Reoon API (`https://emailverifier.reoon.com/api/v1/verify?email=...&key=...&mode=power`).
+4. Reoon returns deliverability classification and credits used.
+5. Backend stores result in `email_verifications`.
+6. Routing:
+   - `safe`: marked ready for AI drafting.
+   - `catch-all`: held in review queue; local UI prompts user to click **"Approve Catch-All"** (`POST /api/v1/emails/{id}/approve-catchall`) before it can be used.
+   - `invalid`, `unknown`, `disposable`: blocked unconditionally.
+7. Event recorded in `audit_log`.
+
+---
+
+## Workflow 6: Generate AI Outreach Drafts
+
+**Purpose**: Generate personalized email drafts with full version history using Gemini or local Ollama.
+
+**Steps**:
+1. User navigates to Outreach Thread in Local UI and clicks **"Generate AI Draft"**.
+2. Backend verifies that the thread's `selected_email_address_id` is verified (`safe` or approved `catch-all`).
+3. Backend checks that contact and organization are not suppressed.
+4. Backend retrieves context:
+   - Organization name, description, website.
+   - Opportunity title, description, and requirements.
+   - Contact name, roles, headline, notes.
+   - Associated LinkedIn post text (if captured from a post).
+5. Backend formats prompt template and calls configured provider (Gemini or Ollama).
+6. Backend parses structured output into subject and body, validating absence of placeholders (`[COMPANY]`, `{{...}}`).
+7. Backend inserts a new row in `drafts` with an incremented version number (`version = N+1`).
+8. Local UI displays the newly generated draft alongside version history and diffs.
+
+---
+
+## Workflow 7: Review, Edit & Approve Draft with SHA-256 Content Hash
+
+**Purpose**: Guarantee that an email can only be sent if its content is bit-for-bit identical to what the user explicitly approved.
+
+```mermaid
+flowchart TD
+    A[User reviews draft in Local UI] --> B{User edits draft text?}
+    B -->|Yes| C[PUT /api/v1/drafts/id: Insert new version with is_edited = 1]
+    B -->|No| D[Keep current draft version]
+    C --> E[User reviews new version]
+    D --> E
+    E --> F[User clicks 'Approve Draft']
+    F --> G[POST /api/v1/drafts/id/approve]
+    G --> H[Compute SHA-256 hash over recipient + subject + body + draft_id + version]
+    H --> I[Insert record into approvals table with approved_content_hash]
+    I --> J[Update outreach_threads status = 'approved']
+    J --> K[Write audit_log: draft_approved]
+```
+
+**Steps**:
+1. User reviews the draft in the Local UI.
+2. If user modifies subject or body:
+   - Backend creates a new row in `drafts` with `is_edited = 1` and `version = N+1`.
+   - Any prior approval on version $N$ is invalid for version $N+1$.
+3. When satisfied, user clicks **"Approve Draft"**.
+4. Backend calculates SHA-256 hash:
+   $$\text{approved\_content\_hash} = \text{SHA256}(\text{recipient} + \text{"\textbackslash n"} + \text{subject} + \text{"\textbackslash n"} + \text{body} + \text{"\textbackslash n"} + \text{draft\_id} + \text{"\textbackslash n"} + \text{version})$$
+5. Backend inserts approval record in `approvals` table storing the hash and content snapshots.
+6. Thread status transitions to `approved`.
+
+---
+
+## Workflow 8: Send Approved Email via Persistent Send Attempt Lifecycle
+
+**Purpose**: Deliver email safely with zero risk of duplicate delivery, enforcing all 10 pre-send checks and persistent state machine tracking.
+
+**10 Mandatory Pre-Send Checks**:
+1. Valid approval exists for the exact current draft version.
+2. Global pause toggle is disabled (`sending_paused == 'false'`).
+3. Global daily sending quota has not been exceeded ($< 20$ sent today).
+4. Contact is not suppressed (`contacts.suppressed == 0`).
+5. Selected email address is not suppressed (no hard bounce in `bounces`).
+6. Email address meets verification eligibility (`safe` or approved `catch-all`).
+7. Catch-all address has separate explicit approval (`catch_all_approved == 1`).
+8. Recipient has not already received an outbound email for this thread and event type.
+9. Outreach thread is eligible for sending (not `suppressed`, `replied`, `bounced`, or `closed`).
+10. Current draft content SHA-256 hash matches `approvals.approved_content_hash`.
+
+**Steps**:
+1. Dispatch triggered manually in UI or via Scheduler.
+2. In-process delivery serialization lock acquired.
+3. Pre-send engine executes all 10 checks against persistent database records.
+4. If any check fails: send is aborted, `send_blocked` recorded in `audit_log`, lock released.
+5. Unique `idempotency_key` generated.
+6. Backend inserts `send_attempts` record with `status = 'pending'` and **COMMITS** the database transaction.
+7. Backend transitions `send_attempts.status = 'sending'`.
+8. **Mode Execution**:
+   - *If `dry_run = true`*: Simulated delivery; update `send_attempts.status = 'sent'`, `dry_run = 1`.
+   - *If `dry_run = false`*: Open TLS 587 socket to Zoho SMTP; transmit message.
+9. **Outcome Handling**:
+   - *SMTP 250 OK*: Update `send_attempts.status = 'sent'`, record `message_id`. Insert `outreach_events` record. Schedule follow-ups for days 3, 7, 14. Increment daily counter.
+   - *SMTP 5xx Permanent Failure*: Update `send_attempts.status = 'failed'`, record error message.
+   - *Connection Timeout / Mid-flight Disconnect*: Update `send_attempts.status = 'unknown'`. Flag for manual user reconciliation. **NEVER auto-resend an unknown attempt.**
+10. Release delivery lock.
+
+---
+
+## Workflow 9: Monitor Replies, Bounces & Auto-Suppress
+
+**Purpose**: Continuously inspect Zoho inbox via IMAP to correlate replies, auto-suppress follow-ups, and flag hard bounces.
+
+**Steps** (Runs every 15 minutes via APScheduler or manual UI trigger):
+1. Poller connects to Zoho IMAP over SSL (port 993).
+2. Fetches unread messages in `INBOX` and delivery status failure folders.
+3. For each message:
+   - **Reply Matching**: Inspects `In-Reply-To` and `References` headers. If matching a sent `outreach_events.message_id`:
+     - Inserts record into `replies`.
+     - Updates `outreach_threads.status = 'replied'`.
+     - Updates all pending `followup_schedules` for this thread to `status = 'suppressed'`, `suppressed_reason = 'reply_received'`.
+     - Writes `reply_received` and `followup_suppressed` entries to `audit_log`.
+   - **Bounce Detection**: If message is a DSN / bounce report:
+     - Extracts bounced email address.
+     - Inserts record into `bounces` table (`bounce_type = 'hard'`).
+     - Updates `email_addresses.suppressed = 1`, `suppressed_reason = 'hard_bounce'`.
+     - Cancels all pending follow-ups for that address.
+4. Marks processed IMAP messages as seen.
+
+---
+
+## Workflow 10: Follow-up Scheduling & Startup Recovery
+
+**Purpose**: Execute scheduled follow-ups reliably across laptop reboots without duplicate dispatches.
+
+**Steps**:
+1. When initial email is sent, records are inserted into `followup_schedules` with:
+   - Follow-up 1: `scheduled_date = today + 3 days`
+   - Follow-up 2: `scheduled_date = today + 7 days`
+   - Follow-up 3: `scheduled_date = today + 14 days`
+2. **On Application Startup (Recovery Routine)**:
+   - Query SQLite for `followup_schedules` where `scheduled_date <= today` and `status = 'pending'`.
+   - For each due task:
+     - Verify parent thread status is still `sent` (not `replied`, `bounced`, or `suppressed`).
+     - Check if follow-up draft has been generated; if not, trigger LLM generation (`status = 'draft_ready'`).
+     - Local UI alerts user that follow-up draft is ready for review.
+3. User reviews and approves follow-up draft (calculating its new SHA-256 approval hash).
+4. Once approved, the follow-up executes via Workflow 8 (Persistent Send Attempt Lifecycle).
+
+---
+
+## Workflow 11: Multi-Level Suppression
+
+**Purpose**: Comply with opt-out requests and prevent unwanted outreach at the person, address, or organization level.
+
+**Steps**:
+1. User navigates to Suppression view in Local UI or receives an opt-out request.
+2. User selects suppression target:
+   - **Contact-Level**: `contacts.suppressed = 1`. Blocks outreach across all opportunities for that person.
+   - **Address-Level**: `email_addresses.suppressed = 1`. Blocks sending to that specific email.
+   - **Organization-Level**: `companies.suppressed = 1`. Blocks outreach to any employee at that company.
+3. Backend immediately updates all associated active `followup_schedules` to `status = 'cancelled'`.
+4. Backend writes `suppression_added` entry to `audit_log`.
+5. Any subsequent draft generation or send attempt targeting a suppressed entity is blocked automatically.
+
+---
+
+## Workflow 12: Manual Google Sheets Synchronization
+
+**Purpose**: Synchronize local SQLite data bidirectionally with a Google Sheets spreadsheet on demand.
+
+**Steps**:
+1. User clicks **"Sync with Google Sheets"** in Local UI.
 2. Backend reads `sheets_sync_state` for each entity type.
-3. Backend fetches rows from configured Google Sheets tabs.
-4. Backend fetches corresponding records from SQLite (matched by `external_id` or `sheets_row_id`).
-5. For each record:
-   - **New in Sheets, not in SQLite**: Create in SQLite.
-   - **New in SQLite, not in Sheets**: Create in Sheets.
-   - **Changed in Sheets only** (Sheets `updated_at` > `last_sync_at`): Apply to SQLite.
-   - **Changed in SQLite only** (SQLite `updated_at` > `last_sync_at`): Apply to Sheets.
-   - **Changed in both**: Record as a conflict. Do not auto-resolve. Surface to user.
-6. Update `sheets_sync_state.last_sync_at` for each entity type.
-7. Write audit log entry: `sync_completed`.
-8. Return a sync report: records created, updated, conflicted.
-
-**Idempotency**: Running sync twice without any changes in between must produce zero creates, zero updates, and zero conflicts.
-
-**Conflict resolution**: The user is presented with conflicting records and must choose which version wins. This is a separate API call: `POST /api/v1/sync/resolve-conflict`.
+3. Backend queries Google Sheets API v4 using service account credentials.
+4. Records are matched using stable UUID `external_id`:
+   - New in Sheets $\rightarrow$ inserted into SQLite.
+   - New in SQLite $\rightarrow$ appended to Sheets.
+   - Modified in Sheets only $\rightarrow$ updated in SQLite.
+   - Modified in SQLite only $\rightarrow$ updated in Sheets.
+   - Modified in both since last sync $\rightarrow$ staged as a **Conflict** in Local UI.
+5. If conflicts exist, Local UI displays side-by-side diffs allowing user to select which version wins (`POST /api/v1/sync/resolve-conflict`).
+6. Update `last_sync_at` and `last_sync_checksum` in `sheets_sync_state`.
+7. Write `sync_completed` to `audit_log`.
