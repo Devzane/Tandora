@@ -6,7 +6,7 @@ from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
 from app.main import app
-from app.database import get_db
+from app.database import get_db, ensure_audit_log_triggers
 from app.models import Base
 
 
@@ -23,9 +23,14 @@ def test_engine():
     def set_fk(dbapi_connection, _):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON;")
+        ensure_audit_log_triggers(cursor)
         cursor.close()
 
     Base.metadata.create_all(engine)
+    with engine.connect() as conn:
+        ensure_audit_log_triggers(conn.connection)
+        conn.commit()
+
     yield engine
     Base.metadata.drop_all(engine)
 
