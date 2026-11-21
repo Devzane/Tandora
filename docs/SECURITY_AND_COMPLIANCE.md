@@ -96,9 +96,10 @@ $$\text{Pre-Send Checks} \rightarrow \text{Persist 'pending' Attempt} \rightarro
 | `failed` | SMTP relay definitively rejected message (e.g. 5xx error) | Log error; quota not incremented; no resend |
 | `unknown` | Socket timed out or dropped mid-flight; delivery indeterminate | **NEVER auto-resend**; flag for manual user reconciliation |
 
-### 5.3 Idempotency & Concurrency Serialization
-- **Idempotency Key**: Generated as `SHA256(thread_id + "_" + draft_id + "_" + approval_id + "_" + attempt_number)` and enforced by a `UNIQUE` constraint on `send_attempts.idempotency_key`.
-- **Delivery Lock**: All outbound sending is serialized in Python using an in-process concurrency lock to prevent race conditions on daily quotas and simultaneous duplicate sends.
+### 5.3 Idempotency & Concurrency Coordination
+- **Authoritative Database Constraints**: Enforced by a database-level `UNIQUE` constraint on `send_attempts.idempotency_key` (`SHA256(thread_id + "_" + draft_id + "_" + approval_id + "_" + attempt_number)`). Duplicate requests are aborted at the database layer with `IntegrityError`.
+- **Authoritative Transactional Coordination**: Quota checks, send-attempt creation, and follow-up claims occur inside SQLite `BEGIN IMMEDIATE` transactions. This provides persistent protection across multiple processes, workers, and application restarts.
+- **Auxiliary In-Process Lock**: An in-memory `threading.Lock` operates in Python as a secondary optimization to minimize SQLite lock contention in a single process, but database constraints and transactions remain the authoritative safeguard.
 
 ### 5.4 Dry-Run Mode
 - Controlled by `DRY_RUN = true` (default in development and testing).
@@ -130,8 +131,8 @@ If any check fails, dispatch is aborted, a `send_blocked` entry is recorded in `
 
 ### 7.1 Third-Party Extension Boundaries (ContactOut & Apollo)
 - **Zero API Scraping**: Tandora never interacts with, reverse-engineers, or calls ContactOut or Apollo backend servers.
-- **Active DOM Only**: The extension reads only visibly rendered text elements in the user's active browser tab when opened.
-- **Manual Fallback**: If an overlay is inaccessible or encapsulated in a closed shadow root, Tandora provides a paste-and-parse manual fallback form.
+- **Strictly Conditional DOM Extraction**: Reading visible overlays from ContactOut or Apollo.io is strictly best-effort and conditional. Closed shadow roots, isolated extension contexts, and sandboxed iframes inherently prevent content scripts from inspecting or traversing third-party extension UI elements.
+- **Essential Manual Paste Fallback**: Because DOM access cannot be guaranteed, the manual copy-paste fallback parser is a mandatory, first-class requirement. The popup provides a direct paste-and-parse interface with heuristic regex extraction so the user can paste contact text directly.
 - **User Initiation**: Data is extracted only upon explicit user action (clicking Capture or pressing `Alt+Shift+T`). No background DOM scraping.
 
 ### 7.2 LinkedIn Terms Compliance
