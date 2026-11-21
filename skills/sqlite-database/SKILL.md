@@ -191,6 +191,19 @@ def persist_capture_bundle(db: Session, payload: CapturePayload) -> Capture:
         return capture
 ```
 
+### 5. Authoritative Concurrency Coordination
+SQLite transactions and table constraints are the authoritative coordination mechanism across processes and restarts:
+- **Daily Sending Quota**: Inside a `BEGIN IMMEDIATE` transaction, check `COUNT(*)` of `send_attempts` where `status IN ('sent', 'sending')` and `DATE(created_at) = DATE('now')`. If the limit (20) is reached, rollback and abort before inserting a new attempt.
+- **Idempotency**: The `UNIQUE(idempotency_key)` constraint on `send_attempts` prevents duplicate sends at the database level across concurrent workers.
+- **Atomic Task Claims**: Follow-up jobs are claimed via an atomic transition:
+  ```sql
+  UPDATE followup_schedules
+  SET status = 'in_progress', updated_at = CURRENT_TIMESTAMP
+  WHERE id = :id AND status = 'scheduled';
+  ```
+  Only if rows affected equals 1 does the worker proceed.
+- Auxiliary in-memory locks in Python reduce single-process SQLite busy handler contention, but SQLite transactional integrity is the authoritative layer.
+
 ---
 
 ## Testing Requirements
@@ -199,3 +212,4 @@ def persist_capture_bundle(db: Session, payload: CapturePayload) -> Capture:
 - Always attach the `PRAGMA foreign_keys = ON;` connection listener in test fixtures.
 - Test that duplicate normalized LinkedIn URLs raise `IntegrityError` or resolve via deduplication service.
 - Test that duplicate idempotency keys on `send_attempts` are blocked.
+- Test that atomic task claims prevent double-execution of follow-up schedules.
