@@ -1,6 +1,6 @@
 ---
 name: email-delivery
-description: Zoho SMTP and IMAP integration for Tandora — sending approved emails, threading, bounce handling, reply detection, sending queues, and rate limits.
+description: Zoho SMTP and IMAP integration for Tandora — persistent send attempts, delivery locks, message threading, bounce handling, reply detection, 20/day quota, and dry-run sending.
 risk: low
 source: project
 date_added: '2026-11-21'
@@ -10,7 +10,7 @@ date_added: '2026-11-21'
 
 ## Purpose
 
-This skill covers outbound email delivery via Zoho SMTP and inbound monitoring via Zoho IMAP: authentication, message threading, bounce detection, reply matching, quota enforcement, and the global pause mechanism.
+This skill covers outbound email delivery via Zoho SMTP and inbound monitoring via Zoho IMAP: the persistent send-attempt lifecycle, delivery serialization lock, message threading, reply matching, hard bounce detection, rate limits, and dry-run execution.
 
 ## When to Use
 
@@ -18,7 +18,13 @@ Read this skill before implementing `integrations/zoho_smtp.py`, `integrations/z
 
 ## Required Engineering Practices
 
-### Zoho SMTP Client
+### 1. Distributed Transaction Limitation
+SMTP and SQLite cannot participate in a single two-phase distributed commit. If an application crashes or network connection drops after SMTP accepts an email but before the database commits, a duplicate-delivery risk exists.
+
+To solve this, Tandora enforces a **persistent send-attempt lifecycle**:
+$$\text{Pre-Send Checks} \rightarrow \text{Persist 'pending'} \rightarrow \text{Commit DB} \rightarrow \text{Transition 'sending'} \rightarrow \text{Dispatch SMTP} \rightarrow \text{Commit 'sent'/'failed'/'unknown'}$$
+
+### 2. Zoho SMTP Client
 
 ```python
 # app/integrations/zoho_smtp.py
@@ -39,11 +45,13 @@ class ZohoSMTPClient:
         settings = get_settings()
         self.username = settings.zoho_smtp_username
         self.password = settings.zoho_smtp_password
+        if not self.username or not self.password:
+            raise ValueError("Zoho SMTP credentials not configured in environment.")
 
     def send(self, to_address: str, subject: str, body: str,
              thread_message_id: str | None = None) -> str:
         """
-        Send an email via Zoho SMTP. Returns the Message-ID of the sent message.
+        Send an email via Zoho SMTP over TLS 587. Returns Message-ID.
         Raises SMTPSendError on failure.
         """
         message_id = make_msgid(domain=self.username.split("@")[-1])
@@ -69,27 +77,117 @@ class ZohoSMTPClient:
                 logger.info("Email sent to %s, Message-ID: %s", to_address, message_id)
                 return message_id
         except smtplib.SMTPException as e:
-            logger.error("SMTP send failed: %s", e)
+            logger.error("SMTP send rejected: %s", e)
             raise SMTPSendError(str(e)) from e
 
 class SMTPSendError(Exception):
     pass
 ```
 
-### Pre-Send Checklist (10 Mandatory Checks)
+### 3. Send Attempt Lifecycle Service
 
-This check must run before every outbound send (initial and follow-up) against persistent database records:
+```python
+import asyncio
+import hashlib
+from datetime import datetime
+
+# In-process concurrency lock to serialize sends and protect quota
+delivery_lock = asyncio.Lock()
+
+async def dispatch_approved_email(
+    db: Session,
+    thread_id: int,
+    draft_id: int,
+    approval_id: int
+) -> SendAttempt:
+    async with delivery_lock:
+        thread = db.get(OutreachThread, thread_id)
+        draft = db.get(Draft, draft_id)
+        approval = db.get(Approval, approval_id)
+        email_addr = db.get(EmailAddress, thread.selected_email_address_id)
+
+        # 1. Enforce 10 pre-send checks
+        pre_send_checks(db, thread_id, draft_id, approval_id)
+
+        # 2. Verify SHA-256 approval content hash
+        expected_hash = hashlib.sha256(
+            f"{email_addr.address.strip().lower()}\n{draft.subject.strip()}\n{draft.body.strip()}\n{draft.id}\n{draft.version}".encode()
+        ).hexdigest()
+        if expected_hash != approval.approved_content_hash:
+            raise PreSendCheckError("Content integrity violation: Draft altered after approval.")
+
+        # 3. Create persistent SendAttempt in 'pending' state
+        idempotency_key = hashlib.sha256(f"{thread_id}_{draft_id}_{approval_id}".encode()).hexdigest()
+        attempt = SendAttempt(
+            outreach_thread_id=thread_id,
+            draft_id=draft_id,
+            approval_id=approval_id,
+            idempotency_key=idempotency_key,
+            status="pending",
+            recipient_address=email_addr.address,
+            dry_run=1 if get_settings().dry_run else 0
+        )
+        db.add(attempt)
+        db.commit()  # Persist BEFORE network socket opened
+
+        # 4. Transition to 'sending'
+        attempt.status = "sending"
+        attempt.started_at = datetime.utcnow()
+        db.commit()
+
+        # 5. Execute Dispatch (Dry-Run vs Live)
+        if get_settings().dry_run:
+            attempt.status = "sent"
+            attempt.completed_at = datetime.utcnow()
+            attempt.message_id = f"<dry-run-{idempotency_key[:12]}@local>"
+            create_outreach_event(db, attempt)
+            db.commit()
+            return attempt
+
+        # Live SMTP delivery
+        try:
+            thread_msg_id = get_thread_message_id(db, thread_id) if draft.draft_type == "followup" else None
+            client = ZohoSMTPClient()
+            message_id = client.send(
+                to_address=email_addr.address,
+                subject=draft.subject,
+                body=draft.body,
+                thread_message_id=thread_msg_id
+            )
+            attempt.status = "sent"
+            attempt.message_id = message_id
+            attempt.completed_at = datetime.utcnow()
+            create_outreach_event(db, attempt)
+            schedule_followups(db, thread_id)
+            db.commit()
+            return attempt
+        except SMTPSendError as e:
+            attempt.status = "failed"
+            attempt.error_message = str(e)
+            attempt.completed_at = datetime.utcnow()
+            db.commit()
+            raise
+        except Exception as e:
+            # Indeterminate failure: connection dropped or timed out
+            attempt.status = "unknown"
+            attempt.error_message = f"Indeterminate state: {e}"
+            attempt.completed_at = datetime.utcnow()
+            db.commit()
+            # NEVER auto-resend unknown attempts
+            raise IndeterminateDeliveryError("SMTP connection dropped mid-flight; delivery state is unknown.") from e
+```
+
+### 4. 10 Mandatory Pre-Send Checks
 
 ```python
 def pre_send_checks(db: Session, thread_id: int, draft_id: int, approval_id: int) -> None:
-    """
-    Raises PreSendCheckError with a descriptive reason if any of the 10 checks fail.
-    """
     config = get_app_config(db)
     thread = db.get(OutreachThread, thread_id)
     draft = db.get(Draft, draft_id)
     contact = db.get(Contact, thread.contact_id)
-    
+    email_addr = db.get(EmailAddress, thread.selected_email_address_id)
+    company = db.get(Company, contact.company_id) if contact.company_id else None
+
     # 1. Exact version approval
     approval = db.get(Approval, approval_id)
     if not approval or approval.draft_id != draft_id:
@@ -109,27 +207,27 @@ def pre_send_checks(db: Session, thread_id: int, draft_id: int, approval_id: int
     if contact.suppressed:
         raise PreSendCheckError(f"Contact is suppressed: {contact.suppressed_reason}")
 
-    # 5. Address suppression (hard bounce check)
-    has_hard_bounce = db.scalar(
-        select(Bounce).where(
-            Bounce.email_address_id == thread.selected_email_address_id,
-            Bounce.bounce_type == "hard"
-        )
-    )
-    if has_hard_bounce:
-        raise PreSendCheckError("Selected email address has a recorded hard bounce")
+    # 5. Address suppression
+    if email_addr.suppressed:
+        raise PreSendCheckError(f"Email address is suppressed: {email_addr.suppressed_reason}")
+    if has_hard_bounce(db, email_addr.id):
+        raise PreSendCheckError("Selected address has a recorded hard bounce")
 
-    # 6. Verification eligibility
-    usable, reason = is_address_usable(db, thread.selected_email_address_id)
+    # 6. Organization suppression
+    if company and company.suppressed:
+        raise PreSendCheckError(f"Organization is suppressed: {company.suppressed_reason}")
+
+    # 7. Verification eligibility
+    usable, reason = is_address_usable(db, email_addr.id)
     if not usable:
         raise PreSendCheckError(f"Selected email address not eligible: {reason}")
 
-    # 7. Catch-all separate explicit approval
-    verification = get_latest_verification(db, thread.selected_email_address_id)
+    # 8. Catch-all separate explicit approval
+    verification = get_latest_verification(db, email_addr.id)
     if verification and verification.status == "catch-all" and not verification.catch_all_approved:
         raise PreSendCheckError("Catch-all address requires separate explicit manual approval")
 
-    # 8. Duplicate send prevention
+    # 9. Duplicate send prevention
     existing = db.scalar(
         select(OutreachEvent).where(
             OutreachEvent.outreach_thread_id == thread_id,
@@ -138,28 +236,16 @@ def pre_send_checks(db: Session, thread_id: int, draft_id: int, approval_id: int
         )
     )
     if existing:
-        raise PreSendCheckError("An outreach message has already been processed for this thread and event type")
+        raise PreSendCheckError("An outreach message has already been sent for this thread and event type")
 
-    # 9. Outreach thread eligibility
+    # 10. Outreach thread eligibility
     if thread.status in ("suppressed", "replied", "bounced", "closed"):
-        raise PreSendCheckError(f"Outreach thread is not eligible for sending (status: {thread.status})")
-
-    # 10. Content integrity since approval
-    if draft.is_edited and draft.created_at > approval.approved_at:
-        raise PreSendCheckError("Draft content was modified after approval was granted; re-approval required")
-
-class PreSendCheckError(Exception):
-    pass
+        raise PreSendCheckError(f"Outreach thread not eligible for sending (status: {thread.status})")
 ```
 
-### Daily Quota Management
-
-Always count sent emails from the database, not an in-memory counter:
-
+### 5. Daily Quota Management
+Always count from `outreach_events` in SQLite:
 ```python
-from datetime import date, datetime
-from sqlalchemy import func, select
-
 def count_sent_today(db: Session) -> int:
     today_start = datetime.combine(date.today(), datetime.min.time())
     return db.scalar(
@@ -168,102 +254,53 @@ def count_sent_today(db: Session) -> int:
     ) or 0
 ```
 
-### Zoho IMAP Client
+### 6. Zoho IMAP Inbound Monitoring
 
 ```python
 # app/integrations/zoho_imap.py
 import imaplib
 import email
 import logging
-from app.config import get_settings
-
-logger = logging.getLogger(__name__)
 
 ZOHO_IMAP_HOST = "imap.zoho.com"
-ZOHO_IMAP_PORT = 993  # SSL
+ZOHO_IMAP_PORT = 993
 
 class ZohoIMAPClient:
     def __init__(self):
         settings = get_settings()
         self.username = settings.zoho_imap_username
         self.password = settings.zoho_imap_password
+        if not self.username or not self.password:
+            raise ValueError("Zoho IMAP credentials not configured in environment.")
 
     def fetch_unread_messages(self) -> list[dict]:
         messages = []
-        try:
-            with imaplib.IMAP4_SSL(ZOHO_IMAP_HOST, ZOHO_IMAP_PORT) as mail:
-                mail.login(self.username, self.password)
-                mail.select("INBOX")
-                _, message_ids = mail.search(None, "UNSEEN")
-                for msg_id in message_ids[0].split():
-                    _, msg_data = mail.fetch(msg_id, "(RFC822)")
-                    raw = msg_data[0][1]
-                    parsed = email.message_from_bytes(raw)
-                    messages.append({
-                        "imap_id": msg_id,
-                        "message_id": parsed.get("Message-ID", "").strip(),
-                        "in_reply_to": parsed.get("In-Reply-To", "").strip(),
-                        "from": parsed.get("From", ""),
-                        "subject": parsed.get("Subject", ""),
-                        "date": parsed.get("Date", ""),
-                        "is_dsn": self._is_dsn(parsed),
-                        "bounced_address": self._extract_bounced_address(parsed),
-                        "snippet": self._get_snippet(parsed),
-                    })
-        except imaplib.IMAP4.error as e:
-            logger.error("IMAP error: %s", e)
-            raise IMAPError(str(e)) from e
+        with imaplib.IMAP4_SSL(ZOHO_IMAP_HOST, ZOHO_IMAP_PORT) as mail:
+            mail.login(self.username, self.password)
+            mail.select("INBOX")
+            _, message_ids = mail.search(None, "UNSEEN")
+            for msg_id in message_ids[0].split():
+                _, msg_data = mail.fetch(msg_id, "(RFC822)")
+                parsed = email.message_from_bytes(msg_data[0][1])
+                messages.append({
+                    "message_id": parsed.get("Message-ID", "").strip(),
+                    "in_reply_to": parsed.get("In-Reply-To", "").strip(),
+                    "from": parsed.get("From", ""),
+                    "subject": parsed.get("Subject", ""),
+                    "date": parsed.get("Date", ""),
+                    "is_dsn": "delivery-status" in parsed.get_content_type(),
+                    "bounced_address": self._extract_bounced_address(parsed)
+                })
         return messages
-
-    def _is_dsn(self, msg) -> bool:
-        content_type = msg.get_content_type()
-        return "delivery-status" in content_type or "report" in content_type
-
-    def _extract_bounced_address(self, msg) -> str | None:
-        for part in msg.walk():
-            if part.get_content_type() == "message/delivery-status":
-                payload = part.get_payload(decode=True)
-                if payload:
-                    for line in payload.decode().split("\n"):
-                        if line.startswith("Final-Recipient:"):
-                            return line.split("rfc822;")[-1].strip()
-        return None
-
-    def _get_snippet(self, msg) -> str:
-        for part in msg.walk():
-            if part.get_content_type() == "text/plain":
-                body = part.get_payload(decode=True)
-                if body:
-                    return body.decode("utf-8", errors="replace")[:500]
-        return ""
-
-class IMAPError(Exception):
-    pass
 ```
 
-## Common Mistakes
-
-- Forgetting `In-Reply-To` and `References` headers on follow-up emails. → Breaks email client conversation threading.
-- Using in-memory counters for rate limits. → Disappears on server restart. Always query `outreach_events`.
-- Bypassing pre-send checks in follow-up scheduling routines. → All sends must pass `pre_send_checks`.
-- Re-verifying or changing email address mid-thread. → Thread must stick to `selected_email_address_id`.
-
-## Security Considerations
-
-- Use app passwords for Zoho SMTP and IMAP rather than account passwords.
-- Always enforce TLS/SSL (port 587 STARTTLS for SMTP, port 993 SSL for IMAP).
-- The global pause toggle is an absolute circuit-breaker: check it first before any outbound communication.
+---
 
 ## Testing Requirements
 
 - Mock `smtplib.SMTP` and `imaplib.IMAP4_SSL` in all tests.
-- Test all 7 pre-send checks individually with negative assertions.
-- Test that reaching 20 emails blocks the 21st attempt.
-- Test that global pause aborts sending immediately.
-- Test that IMAP reply detection suppresses pending follow-ups for that thread.
-
-## Project-Specific Constraints
-
-- Daily sending quota: exactly 20 emails globally (initial outreach + follow-ups combined).
-- Zoho SMTP and IMAP endpoints only.
-- Strict one recipient address per outreach thread.
+- Test that send-attempt is committed to database in `pending` state before SMTP transmission.
+- Test that SMTP connection failure transitions attempt to `failed` or `unknown`.
+- Test that attempts in `unknown` state are never automatically retried.
+- Test that in-process delivery lock serializes concurrent calls.
+- Test dry-run mode executes state transitions and generates simulated message IDs.
