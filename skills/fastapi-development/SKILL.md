@@ -20,20 +20,74 @@ Read this skill before writing any FastAPI router, Pydantic schema, or API test.
 
 ### Application Structure
 
+Tandora pairs headless JSON API endpoints (`/api/v1/*`) with a server-rendered local web UI using Jinja2 templates (`/ui/*` and root paths) introduced in Stage 1.
+
 ```python
 # app/main.py
-from fastapi import FastAPI
-from app.api.v1 import companies, contacts, opportunities, drafts
-from app.database import create_db_and_tables
+from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from app.api.v1 import companies, contacts, opportunities, drafts, captures, sending, sync
+from app.ui import routes as ui_routes
+from app.database import engine, Base
 
-app = FastAPI(title="Tandora API", version="1.0.0")
+app = FastAPI(title="Tandora Local Hub", version="1.0.0")
 
+# Static files and Jinja2 templates for Minimal Functional UI (Stage 1)
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+templates = Jinja2Templates(directory="app/templates")
+
+# Register UI views (server-rendered HTML)
+app.include_router(ui_routes.router, tags=["Local UI"])
+
+# Register JSON API routes
 app.include_router(companies.router, prefix="/api/v1/companies", tags=["companies"])
 app.include_router(contacts.router, prefix="/api/v1/contacts", tags=["contacts"])
+app.include_router(opportunities.router, prefix="/api/v1/opportunities", tags=["opportunities"])
+app.include_router(drafts.router, prefix="/api/v1/drafts", tags=["drafts"])
+app.include_router(captures.router, prefix="/api/v1/captures", tags=["captures"])
+app.include_router(sending.router, prefix="/api/v1/sending", tags=["sending"])
+app.include_router(sync.router, prefix="/api/v1/sync", tags=["sync"])
 
 @app.on_event("startup")
 async def startup():
-    create_db_and_tables()
+    # Tables are managed by Alembic in development/production
+    pass
+```
+
+### Server-Rendered Local Web UI Pattern (Stage 1)
+
+The UI provides 13 core views rendered server-side with zero npm/build steps:
+1. Dashboard (`/`) — Daily quota meter, global pause banner, quick metrics.
+2. Organizations (`/organizations`) — List and create companies.
+3. Opportunities (`/opportunities`) — Employment and freelance opportunities.
+4. Contacts (`/contacts`) — Profile data, roles, duplicate review badges.
+5. Communication Channels (`/contacts/{id}/channels`) — Email addresses and phone numbers.
+6. Email Verifications (`/verifications`) — Status badges, catch-all approval buttons.
+7. Outreach Threads (`/threads`) — Conversation threads with opportunity links.
+8. Draft Management (`/threads/{id}/drafts`) — Generation form, version history, diffs.
+9. Approvals (`/approvals`) — Strict review queue with SHA-256 hash preview.
+10. Global Controls (`/settings`) — Pause/resume switch, daily sending quota.
+11. Send Attempts (`/send-attempts`) — Persistent audit log (`pending`, `sending`, `sent`, `failed`, `unknown`).
+12. Suppression Management (`/suppressions`) — Contact, email, and company suppressions.
+13. Google Sheets Synchronization (`/sync`) — Manual sync trigger, diff preview, conflict resolution.
+
+```python
+# app/ui/routes.py
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.services import organization_service, sending_service
+
+router = APIRouter()
+templates = Jinja2Templates(directory="app/templates")
+
+@router.get("/", response_class=HTMLResponse)
+def get_dashboard(request: Request, db: Session = Depends(get_db)):
+    metrics = sending_service.get_dashboard_metrics(db)
+    return templates.TemplateResponse("dashboard.html", {"request": request, "metrics": metrics})
 ```
 
 ### Pydantic Schemas
