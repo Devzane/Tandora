@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.api.v1 import api_v1_router
 from app.ui import ui_router
+from app.middleware.security import LocalSecurityMiddleware
 
 # Configure local logging
 logging.basicConfig(
@@ -41,14 +42,8 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Restrict CORS to local development origins
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://127.0.0.1:8000", "http://localhost:8000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Local origin, CSRF, and secure headers middleware
+app.add_middleware(LocalSecurityMiddleware)
 
 # Mount static assets
 static_path = Path(__file__).resolve().parent / "static"
