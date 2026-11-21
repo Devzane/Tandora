@@ -25,8 +25,8 @@ One person operating the application locally on a Windows 11 laptop (16 GB RAM, 
 |----|----------|-------------|
 | UC-01 | Capture LinkedIn Profile | Extract prospect name, headline, current company, title, location, and LinkedIn URL via Chrome Extension |
 | UC-02 | Capture LinkedIn Post | Capture post author, post text excerpt, post URL, timestamp, and company context (distinct from profile owner) |
-| UC-03 | Capture Third-Party Overlay | Read visible contact information from ContactOut or Apollo.io panels when open and accessible |
-| UC-04 | Manual Fallback Capture | Paste unstructured contact data into extension form with heuristic parsing when overlays are inaccessible |
+| UC-03 | Capture Third-Party Overlay (Conditional) | Conditionally read visible contact information from ContactOut or Apollo.io panels when open and accessible in active DOM |
+| UC-04 | Essential Manual Fallback Capture | Mandatory paste-and-parse interface in extension popup with heuristic extraction when overlays are isolated or in closed shadow DOM |
 | UC-05 | Web Opportunity Capture | Capture job postings and company leads from arbitrary websites or job boards |
 | UC-06 | Manage Prospects via Local UI | View, create, edit, filter organizations, opportunities, contacts, emails, and phone numbers in a local web interface |
 | UC-07 | Verify Emails via Reoon | Verify deliverability with 30-day caching, classifying safe, catch-all, invalid, unknown, role, and disposable |
@@ -145,7 +145,8 @@ One person operating the application locally on a Windows 11 laptop (16 GB RAM, 
 - **Catch-All Gate**: Explicit manual approval required for catch-all emails.
 - **Single Recipient**: Exactly one selected email address per outreach thread. No duplicate sends.
 - **Extension**: Chrome Manifest V3, `activeTab`, `scripting`, `storage`, host permission `http://127.0.0.1:8000/*` only. No `<all_urls>`.
-- **Third-Party Overlays**: Visible DOM reading only with manual fallback. No reverse-engineering or scraping of ContactOut/Apollo APIs.
+- **Third-Party Overlays**: Extraction from ContactOut or Apollo is strictly conditional and best-effort due to closed shadow roots and frame sandboxing. The manual copy-paste fallback parser is an essential, mandatory core capability.
+- **Authoritative Concurrency Coordination**: SQLite transactional coordination (`BEGIN IMMEDIATE`) and database constraints are the authoritative safeguards for quotas, duplicate send prevention, and follow-up claims across multiple processes and restarts; in-memory locks are strictly auxiliary.
 
 ---
 
