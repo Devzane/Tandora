@@ -1,0 +1,33 @@
+# Environments & Credentials
+.env
+.env.local
+*.env
+
+# SQLite Databases
+data/*.db
+data/*.sqlite3
+data/*.db-journal
+data/*.db-wal
+*.db
+*.sqlite3
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Operating System & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
