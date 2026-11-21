@@ -2,56 +2,69 @@
 
 ## 1. Overview
 
-All application data is stored in a single SQLite database file (`./data/tandora.db`). The schema is managed by Alembic for incremental, lossless migrations.
+All application data is stored in a single SQLite database file (`./data/tandora.db`). The schema is managed by Alembic for version-controlled, lossless migrations.
 
-The database is the single source of truth. No application state lives exclusively in-memory across restarts.
+The database is the single source of truth for all prospect records, verification statuses, AI drafts, approvals, send attempts, follow-up schedules, and audit trails.
+
+SQLite foreign key constraints are strictly enforced across all sessions:
+```sql
+PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+```
 
 ---
 
-## 2. Entity Summary
+## 2. Entity Summary (21 Tables)
 
 | Entity | Table | Purpose |
 |--------|-------|---------|
-| Company | `companies` | A company (employer or freelance prospect) |
-| Opportunity | `opportunities` | A job or freelance engagement at a company |
-| Contact | `contacts` | A person at a company |
-| Contact Role | `contact_roles` | A role a contact holds (Recruiter, CTO, etc.) |
-| Email Address | `email_addresses` | An email address belonging to a contact |
-| Verification Result | `email_verifications` | Reoon verification result for an address |
-| Outreach Thread | `outreach_threads` | A single outreach engagement (contact + opportunity) |
-| Draft | `drafts` | A versioned email draft |
-| Approval | `approvals` | An approval record for a draft |
-| Outreach Event | `outreach_events` | A sent email or follow-up |
-| Follow-up Schedule | `followup_schedules` | Scheduled follow-up for a thread |
-| Reply | `replies` | A detected inbound reply |
-| Bounce | `bounces` | A detected bounce for a sent message |
-| Opportunity Contact | `opportunity_contacts` | Many-to-many: contacts associated with an opportunity |
-| Sheets Sync State | `sheets_sync_state` | Last-sync metadata for Google Sheets |
-| Audit Log | `audit_log` | Immutable event log |
-| App Config | `app_config` | Key-value application configuration |
+| Organization / Company | `companies` | Companies, employers, and freelance prospect organizations |
+| Opportunity | `opportunities` | Specific jobs or freelance service opportunities |
+| Contact | `contacts` | Individual prospects and decision-makers |
+| Contact Role | `contact_roles` | Normalized roles held by contacts (e.g., CTO, Founder, Recruiter) |
+| Email Address | `email_addresses` | Contact email addresses with individual provenance tracking |
+| Phone Number | `phone_numbers` | Contact phone numbers with individual provenance tracking |
+| Email Verification | `email_verifications` | Reoon deliverability verification results (30-day cache) |
+| Raw Capture | `captures` | Full structured payloads captured from extension or web |
+| LinkedIn Post | `linkedin_posts` | Post content and author context captured from LinkedIn feeds |
+| Opportunity Contact | `opportunity_contacts` | Many-to-many link between opportunities and relevant contacts |
+| Outreach Thread | `outreach_threads` | Unique outreach engagement per (opportunity, contact, selected_email) |
+| Draft | `drafts` | Immutable versioned email drafts |
+| Approval | `approvals` | Explicit user approvals with SHA-256 approved content hash |
+| Send Attempt | `send_attempts` | Persistent lifecycle state machine for outbound delivery attempts |
+| Outreach Event | `outreach_events` | Historical record of successfully dispatched emails |
+| Follow-up Schedule | `followup_schedules` | Persistent database schedule for Days 3, 7, and 14 follow-ups |
+| Reply | `replies` | Inbound replies detected and correlated via Zoho IMAP |
+| Bounce | `bounces` | Hard/soft bounce events detected via IMAP delivery status notifications |
+| Sheets Sync State | `sheets_sync_state` | Checksums and timestamps for Google Sheets bidirectional sync |
+| Audit Log | `audit_log` | Immutable append-only operational audit trail |
+| App Config | `app_config` | Persistent application configuration key-value store |
 
 ---
 
 ## 3. Table Definitions
 
-### 3.1 `companies`
+### 3.1 `companies` (Organizations)
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | Internal ID |
-| `external_id` | TEXT | UNIQUE, NOT NULL | Stable external ID for Sheets sync |
-| `name` | TEXT | NOT NULL | Company name |
-| `website` | TEXT | | Company website URL |
-| `industry` | TEXT | | Industry category |
-| `description` | TEXT | | Notes about the company |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `external_id` | TEXT | UNIQUE, NOT NULL | Stable UUIDv4 identifier for Sheets sync |
+| `name` | TEXT | NOT NULL | Organization name |
+| `website` | TEXT | | Cleaned website URL |
+| `industry` | TEXT | | Industry classification |
+| `description` | TEXT | | Brief description or notes |
 | `type` | TEXT | NOT NULL, DEFAULT 'employer' | `employer` or `freelance_prospect` |
-| `source_url` | TEXT | | URL where company was first captured |
-| `created_at` | DATETIME | NOT NULL, DEFAULT now | Record creation timestamp |
+| `source_url` | TEXT | | URL where company was first discovered |
+| `suppressed` | INTEGER | NOT NULL, DEFAULT 0 | 1 = Organization-level suppression active |
+| `suppressed_reason` | TEXT | | Reason for organization suppression |
+| `suppressed_at` | DATETIME | | Timestamp of suppression |
+| `created_at` | DATETIME | NOT NULL, DEFAULT now | Creation timestamp |
 | `updated_at` | DATETIME | NOT NULL, DEFAULT now | Last modification timestamp |
-| `sheets_row_id` | TEXT | | Google Sheets row reference |
-| `sheets_last_synced_at` | DATETIME | | Last Sheets sync timestamp |
+| `sheets_row_id` | TEXT | | Associated Google Sheets row reference |
+| `sheets_last_synced_at` | DATETIME | | Last successful sync timestamp |
 
-**Indexes**: `idx_companies_name`, `idx_companies_external_id`
+**Indexes**: `idx_companies_name`, `idx_companies_external_id`, `idx_companies_suppressed`
 
 ---
 
@@ -59,18 +72,18 @@ The database is the single source of truth. No application state lives exclusive
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | Internal ID |
-| `external_id` | TEXT | UNIQUE, NOT NULL | Stable external ID for Sheets sync |
-| `company_id` | INTEGER | FK → companies.id, NOT NULL | Parent company |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `external_id` | TEXT | UNIQUE, NOT NULL | Stable UUIDv4 identifier |
+| `company_id` | INTEGER | FK $\rightarrow$ companies.id, NOT NULL | Associated organization |
 | `type` | TEXT | NOT NULL | `employment` or `freelance_prospect` |
-| `title` | TEXT | NOT NULL | Job title or engagement description |
-| `description` | TEXT | | Full job description or engagement notes |
-| `source_url` | TEXT | | URL of job posting or lead page |
+| `title` | TEXT | NOT NULL | Opportunity or job title |
+| `description` | TEXT | | Job description or service scope requirements |
+| `source_url` | TEXT | | Posting or announcement URL |
 | `status` | TEXT | NOT NULL, DEFAULT 'active' | `active`, `paused`, `closed`, `won`, `lost` |
-| `created_at` | DATETIME | NOT NULL, DEFAULT now | |
-| `updated_at` | DATETIME | NOT NULL, DEFAULT now | |
-| `sheets_row_id` | TEXT | | |
-| `sheets_last_synced_at` | DATETIME | | |
+| `created_at` | DATETIME | NOT NULL, DEFAULT now | Creation timestamp |
+| `updated_at` | DATETIME | NOT NULL, DEFAULT now | Last modification timestamp |
+| `sheets_row_id` | TEXT | | Sheets row reference |
+| `sheets_last_synced_at` | DATETIME | | Last sync timestamp |
 
 **Indexes**: `idx_opportunities_company_id`, `idx_opportunities_status`
 
@@ -80,24 +93,28 @@ The database is the single source of truth. No application state lives exclusive
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | Internal ID |
-| `external_id` | TEXT | UNIQUE, NOT NULL | Stable external ID for Sheets sync |
-| `company_id` | INTEGER | FK → companies.id, NOT NULL | Company this contact belongs to |
-| `first_name` | TEXT | NOT NULL | |
-| `last_name` | TEXT | | |
-| `linkedin_url` | TEXT | | LinkedIn profile URL |
-| `notes` | TEXT | | Manual notes |
-| `suppressed` | INTEGER | NOT NULL, DEFAULT 0 | 1 = do not contact |
-| `suppressed_reason` | TEXT | | Reason for suppression |
-| `suppressed_at` | DATETIME | | When suppressed |
-| `created_at` | DATETIME | NOT NULL, DEFAULT now | |
-| `updated_at` | DATETIME | NOT NULL, DEFAULT now | |
-| `sheets_row_id` | TEXT | | |
-| `sheets_last_synced_at` | DATETIME | | |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `external_id` | TEXT | UNIQUE, NOT NULL | Stable UUIDv4 identifier |
+| `company_id` | INTEGER | FK $\rightarrow$ companies.id | Current organization (nullable for unassigned leads) |
+| `first_name` | TEXT | NOT NULL | First name |
+| `last_name` | TEXT | | Last name |
+| `full_name` | TEXT | NOT NULL | Computed or extracted full name |
+| `headline` | TEXT | | Professional headline / title summary |
+| `location` | TEXT | | Geographical location |
+| `linkedin_url` | TEXT | | Original LinkedIn profile URL |
+| `normalized_linkedin_url` | TEXT | UNIQUE | Canonicalized LinkedIn URL (strip params, slashes, lowercase) |
+| `notes` | TEXT | | User-annotated notes |
+| `duplicate_flag` | INTEGER | NOT NULL, DEFAULT 0 | 1 = Potential duplicate flagged for manual review |
+| `duplicate_of_contact_id` | INTEGER | FK $\rightarrow$ contacts.id | Target contact ID if flagged as potential duplicate |
+| `suppressed` | INTEGER | NOT NULL, DEFAULT 0 | 1 = Person-level suppression active |
+| `suppressed_reason` | TEXT | | Reason for contact suppression |
+| `suppressed_at` | DATETIME | | Timestamp of contact suppression |
+| `created_at` | DATETIME | NOT NULL, DEFAULT now | Creation timestamp |
+| `updated_at` | DATETIME | NOT NULL, DEFAULT now | Last modification timestamp |
+| `sheets_row_id` | TEXT | | Sheets row reference |
+| `sheets_last_synced_at` | DATETIME | | Last sync timestamp |
 
-**Indexes**: `idx_contacts_company_id`, `idx_contacts_suppressed`
-
-**Deduplication**: Before inserting a contact, the system checks for an existing contact at the same company with the same `first_name` + `last_name` + `linkedin_url`. If a match exists, the existing record is updated rather than a duplicate created.
+**Indexes**: `idx_contacts_normalized_linkedin`, `idx_contacts_company_id`, `idx_contacts_suppressed`, `idx_contacts_duplicate_flag`
 
 ---
 
@@ -105,13 +122,12 @@ The database is the single source of truth. No application state lives exclusive
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | |
-| `contact_id` | INTEGER | FK → contacts.id, NOT NULL | |
-| `role` | TEXT | NOT NULL | e.g., `Recruiter`, `CTO`, `Founder`, `Hiring Manager` |
-| `created_at` | DATETIME | NOT NULL, DEFAULT now | |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `contact_id` | INTEGER | FK $\rightarrow$ contacts.id, NOT NULL | Associated contact |
+| `role` | TEXT | NOT NULL | Role designation (e.g., `CTO`, `Founder`, `Recruiter`) |
+| `created_at` | DATETIME | NOT NULL, DEFAULT now | Creation timestamp |
 
-**Indexes**: `idx_contact_roles_contact_id`
-**Unique constraint**: `(contact_id, role)` — prevents duplicate roles per contact.
+**Unique Constraint**: `(contact_id, role)` — prevents duplicate role assignments.
 
 ---
 
@@ -119,432 +135,394 @@ The database is the single source of truth. No application state lives exclusive
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | |
-| `external_id` | TEXT | UNIQUE, NOT NULL | Stable ID for Sheets sync |
-| `contact_id` | INTEGER | FK → contacts.id, NOT NULL | |
-| `address` | TEXT | NOT NULL | The email address |
-| `is_primary` | INTEGER | NOT NULL, DEFAULT 0 | 1 = preferred address |
-| `source` | TEXT | | Where this address was found |
-| `created_at` | DATETIME | NOT NULL, DEFAULT now | |
-| `updated_at` | DATETIME | NOT NULL, DEFAULT now | |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `external_id` | TEXT | UNIQUE, NOT NULL | Stable UUIDv4 identifier |
+| `contact_id` | INTEGER | FK $\rightarrow$ contacts.id, NOT NULL | Associated contact |
+| `address` | TEXT | NOT NULL | Normalized email address (lowercase, trimmed) |
+| `is_primary` | INTEGER | NOT NULL, DEFAULT 0 | 1 = Primary outreach address for contact |
+| `source` | TEXT | NOT NULL, DEFAULT 'manual' | Provenance: `ContactOut`, `Apollo`, `LinkedIn`, `manual`, `website` |
+| `source_url` | TEXT | | URL where address was discovered |
+| `captured_at` | DATETIME | NOT NULL, DEFAULT now | Timestamp when extracted |
+| `suppressed` | INTEGER | NOT NULL, DEFAULT 0 | 1 = Address-level suppression active (bounced/opt-out) |
+| `suppressed_reason` | TEXT | | Reason for address suppression |
+| `suppressed_at` | DATETIME | | Timestamp of address suppression |
+| `created_at` | DATETIME | NOT NULL, DEFAULT now | Record creation timestamp |
+| `updated_at` | DATETIME | NOT NULL, DEFAULT now | Record update timestamp |
 
-**Indexes**: `idx_email_addresses_contact_id`, `idx_email_addresses_address`
-**Unique constraint**: `address` — the same email address cannot be associated with two different contacts. If the same address appears for a different contact, a deduplication warning is logged.
-
----
-
-### 3.6 `email_verifications`
-
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | |
-| `email_address_id` | INTEGER | FK → email_addresses.id, NOT NULL | |
-| `status` | TEXT | NOT NULL | `safe`, `catch-all`, `invalid`, `unknown` |
-| `catch_all_approved` | INTEGER | NOT NULL, DEFAULT 0 | 1 = user has approved this catch-all address |
-| `catch_all_approved_at` | DATETIME | | When catch-all was approved |
-| `reoon_response` | TEXT | | Full JSON response from Reoon API |
-| `credits_used` | INTEGER | | Credits consumed for this verification |
-| `verified_at` | DATETIME | NOT NULL | When verification was performed |
-| `expires_at` | DATETIME | | When this result should be re-verified |
-
-**Indexes**: `idx_email_verifications_email_address_id`, `idx_email_verifications_status`
-
-**Note**: Multiple verification records may exist for the same email address over time (re-verification). The most recent record is used for routing decisions.
+**Unique Constraint**: `address` — an email address maps to one contact.
+**Indexes**: `idx_email_addresses_contact_id`, `idx_email_addresses_address`, `idx_email_addresses_suppressed`
 
 ---
 
-### 3.7 `opportunity_contacts`
-
-Many-to-many association between contacts and opportunities.
+### 3.6 `phone_numbers`
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | |
-| `opportunity_id` | INTEGER | FK → opportunities.id, NOT NULL | |
-| `contact_id` | INTEGER | FK → contacts.id, NOT NULL | |
-| `created_at` | DATETIME | NOT NULL, DEFAULT now | |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `contact_id` | INTEGER | FK $\rightarrow$ contacts.id, NOT NULL | Associated contact |
+| `number` | TEXT | NOT NULL | Phone number string |
+| `type` | TEXT | NOT NULL, DEFAULT 'direct' | `work`, `mobile`, `direct`, `company`, `other` |
+| `source` | TEXT | NOT NULL, DEFAULT 'manual' | Provenance: `ContactOut`, `Apollo`, `LinkedIn`, `manual` |
+| `source_url` | TEXT | | URL where number was discovered |
+| `captured_at` | DATETIME | NOT NULL, DEFAULT now | Extraction timestamp |
+| `created_at` | DATETIME | NOT NULL, DEFAULT now | Creation timestamp |
+| `updated_at` | DATETIME | NOT NULL, DEFAULT now | Update timestamp |
 
-**Unique constraint**: `(opportunity_id, contact_id)`
+**Unique Constraint**: `(contact_id, number)`
+**Indexes**: `idx_phone_numbers_contact_id`
 
 ---
 
-### 3.8 `outreach_threads`
-
-Represents a single outreach engagement between one contact and one opportunity.
+### 3.7 `email_verifications`
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | |
-| `external_id` | TEXT | UNIQUE, NOT NULL | |
-| `opportunity_id` | INTEGER | FK → opportunities.id, NOT NULL | |
-| `contact_id` | INTEGER | FK → contacts.id, NOT NULL | |
-| `selected_email_address_id` | INTEGER | FK → email_addresses.id, NOT NULL | The one address used for this thread |
-| `status` | TEXT | NOT NULL, DEFAULT 'draft' | `draft`, `approved`, `sent`, `replied`, `bounced`, `suppressed`, `closed` |
-| `created_at` | DATETIME | NOT NULL, DEFAULT now | |
-| `updated_at` | DATETIME | NOT NULL, DEFAULT now | |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `email_address_id` | INTEGER | FK $\rightarrow$ email_addresses.id, NOT NULL | Verified address |
+| `status` | TEXT | NOT NULL | `safe`, `catch-all`, `invalid`, `unknown`, `role_account`, `disposable` |
+| `catch_all_approved` | INTEGER | NOT NULL, DEFAULT 0 | 1 = Explicit manual approval granted by user |
+| `catch_all_approved_at` | DATETIME | | Timestamp of catch-all approval |
+| `reoon_response` | TEXT | | Raw JSON response payload from Reoon API |
+| `credits_used` | INTEGER | NOT NULL, DEFAULT 1 | Reoon API credits consumed |
+| `verified_at` | DATETIME | NOT NULL | Verification execution timestamp |
+| `expires_at` | DATETIME | NOT NULL | Cache expiry timestamp (verified_at + 30 days) |
 
-**Unique constraint**: `(opportunity_id, contact_id)` — one thread per contact per opportunity.
-
-**Indexes**: `idx_outreach_threads_opportunity_id`, `idx_outreach_threads_contact_id`, `idx_outreach_threads_status`
-
-**Note**: The `selected_email_address_id` locks in the recipient for the entire thread. The system will never send to a different address for the same thread, even if other addresses exist for the contact.
+**Indexes**: `idx_email_verifications_address_id`, `idx_email_verifications_status`, `idx_email_verifications_expires`
 
 ---
 
-### 3.9 `drafts`
-
-Versioned email drafts for outreach threads.
+### 3.8 `captures` (Raw Extension & Web Ingestion)
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | |
-| `outreach_thread_id` | INTEGER | FK → outreach_threads.id, NOT NULL | |
-| `version` | INTEGER | NOT NULL | Version number, starting at 1 |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `capture_type` | TEXT | NOT NULL | `linkedin_profile`, `linkedin_post`, `linkedin_company`, `job_listing`, `generic_web`, `contactout_apollo_overlay` |
+| `page_type` | TEXT | NOT NULL | Extracted page classification |
+| `source_url` | TEXT | NOT NULL | URL of captured tab |
+| `source_title` | TEXT | | Page title |
+| `selected_text` | TEXT | | Text selected by user on page |
+| `user_notes` | TEXT | | Notes added in extension popup |
+| `raw_payload` | TEXT | NOT NULL | Complete JSON payload extracted |
+| `company_id` | INTEGER | FK $\rightarrow$ companies.id | Linked organization (if created/matched) |
+| `contact_id` | INTEGER | FK $\rightarrow$ contacts.id | Linked contact (if created/matched) |
+| `opportunity_id` | INTEGER | FK $\rightarrow$ opportunities.id | Linked opportunity (if created/matched) |
+| `captured_at` | DATETIME | NOT NULL | Client-side capture timestamp |
+| `created_at` | DATETIME | NOT NULL, DEFAULT now | Server receipt timestamp |
+
+**Indexes**: `idx_captures_source_url`, `idx_captures_contact_id`
+
+---
+
+### 3.9 `linkedin_posts`
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `capture_id` | INTEGER | FK $\rightarrow$ captures.id, NOT NULL | Associated capture record |
+| `author_name` | TEXT | NOT NULL | Post author's name |
+| `author_linkedin_url` | TEXT | | Post author's LinkedIn URL |
+| `author_headline` | TEXT | | Post author's headline / role |
+| `post_url` | TEXT | NOT NULL | Canonical URL of the post |
+| `post_text` | TEXT | NOT NULL | Text body or visible excerpt of the post |
+| `post_timestamp` | TEXT | | Relative or absolute post timestamp string |
+| `company_mentioned` | TEXT | | Company or organization identified in post |
+| `author_contact_id` | INTEGER | FK $\rightarrow$ contacts.id | Linked contact if author was added as a decision-maker |
+| `opportunity_id` | INTEGER | FK $\rightarrow$ opportunities.id | Linked opportunity if post represents a job/freelance lead |
+| `created_at` | DATETIME | NOT NULL, DEFAULT now | Creation timestamp |
+
+**Indexes**: `idx_linkedin_posts_post_url`, `idx_linkedin_posts_author_contact`
+
+---
+
+### 3.10 `opportunity_contacts`
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `opportunity_id` | INTEGER | FK $\rightarrow$ opportunities.id, NOT NULL | Opportunity reference |
+| `contact_id` | INTEGER | FK $\rightarrow$ contacts.id, NOT NULL | Contact reference |
+| `created_at` | DATETIME | NOT NULL, DEFAULT now | Creation timestamp |
+
+**Unique Constraint**: `(opportunity_id, contact_id)`
+
+---
+
+### 3.11 `outreach_threads`
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `external_id` | TEXT | UNIQUE, NOT NULL | Stable UUIDv4 identifier |
+| `opportunity_id` | INTEGER | FK $\rightarrow$ opportunities.id, NOT NULL | Opportunity reference |
+| `contact_id` | INTEGER | FK $\rightarrow$ contacts.id, NOT NULL | Target contact |
+| `selected_email_address_id` | INTEGER | FK $\rightarrow$ email_addresses.id, NOT NULL | The single locked email address for this thread |
+| `status` | TEXT | NOT NULL, DEFAULT 'draft' | `draft`, `approved`, `sending`, `sent`, `replied`, `bounced`, `suppressed`, `closed` |
+| `created_at` | DATETIME | NOT NULL, DEFAULT now | Creation timestamp |
+| `updated_at` | DATETIME | NOT NULL, DEFAULT now | Modification timestamp |
+
+**Unique Constraint**: `(opportunity_id, contact_id)` — exactly one thread per person per opportunity.
+**Indexes**: `idx_outreach_threads_status`, `idx_outreach_threads_contact_id`
+
+---
+
+### 3.12 `drafts`
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `outreach_thread_id` | INTEGER | FK $\rightarrow$ outreach_threads.id, NOT NULL | Parent outreach thread |
+| `version` | INTEGER | NOT NULL | Sequential version number (1, 2, ...) |
 | `draft_type` | TEXT | NOT NULL | `initial` or `followup` |
-| `followup_number` | INTEGER | | 1, 2, or 3 for follow-ups |
+| `followup_number` | INTEGER | | 1, 2, or 3 (for follow-ups) |
 | `subject` | TEXT | NOT NULL | Email subject line |
 | `body` | TEXT | NOT NULL | Email body text |
 | `llm_provider` | TEXT | | `gemini` or `ollama` |
-| `llm_model` | TEXT | | Model name used for generation |
-| `generation_prompt` | TEXT | | Prompt used for generation (for audit) |
-| `is_edited` | INTEGER | NOT NULL, DEFAULT 0 | 1 = user manually edited this draft |
-| `created_at` | DATETIME | NOT NULL, DEFAULT now | |
+| `llm_model` | TEXT | | LLM model identifier (e.g., `gemini-1.5-flash`) |
+| `generation_prompt` | TEXT | | Prompt used for generation (audit context) |
+| `is_edited` | INTEGER | NOT NULL, DEFAULT 0 | 1 = Draft was manually edited by user |
+| `created_at` | DATETIME | NOT NULL, DEFAULT now | Creation timestamp |
 
-**Unique constraint**: `(outreach_thread_id, draft_type, followup_number, version)`
-
-**Indexes**: `idx_drafts_outreach_thread_id`
-
-**Versioning rule**: Each LLM generation or user edit creates a new draft row with an incremented version. The highest version for a given `(outreach_thread_id, draft_type, followup_number)` is the current draft.
+**Unique Constraint**: `(outreach_thread_id, draft_type, followup_number, version)`
+**Indexes**: `idx_drafts_thread_version`
 
 ---
 
-### 3.10 `approvals`
-
-Records of explicit user approvals for drafts.
+### 3.13 `approvals`
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | |
-| `draft_id` | INTEGER | FK → drafts.id, NOT NULL, UNIQUE | Only one approval record per draft version |
-| `outreach_thread_id` | INTEGER | FK → outreach_threads.id, NOT NULL | |
-| `approved_at` | DATETIME | NOT NULL | When approval was recorded |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `draft_id` | INTEGER | FK $\rightarrow$ drafts.id, NOT NULL, UNIQUE | Approved draft version |
+| `outreach_thread_id` | INTEGER | FK $\rightarrow$ outreach_threads.id, NOT NULL | Associated outreach thread |
+| `approved_content_hash` | TEXT | NOT NULL | SHA-256 hash of recipient + subject + body + draft_id + version |
+| `recipient_address` | TEXT | NOT NULL | Recipient address at time of approval |
+| `subject_snapshot` | TEXT | NOT NULL | Exact subject approved |
+| `body_snapshot` | TEXT | NOT NULL | Exact body approved |
+| `approved_at` | DATETIME | NOT NULL | Timestamp of approval |
 | `notes` | TEXT | | Optional reviewer notes |
 
-**Rule**: An approval is associated with a specific draft version. If the draft is re-generated or edited, a new draft version is created and the approval is invalidated (the new version must be re-approved).
+**Rule**: If a draft is edited or regenerated, a new draft version is created. The old approval references the prior version and is invalid for the new draft version.
 
 ---
 
-### 3.11 `outreach_events`
-
-Records of sent emails.
+### 3.14 `send_attempts`
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | |
-| `outreach_thread_id` | INTEGER | FK → outreach_threads.id, NOT NULL | |
-| `draft_id` | INTEGER | FK → drafts.id, NOT NULL | The approved draft that was sent |
-| `approval_id` | INTEGER | FK → approvals.id, NOT NULL | The approval record |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `outreach_thread_id` | INTEGER | FK $\rightarrow$ outreach_threads.id, NOT NULL | Outreach thread reference |
+| `draft_id` | INTEGER | FK $\rightarrow$ drafts.id, NOT NULL | Approved draft version |
+| `approval_id` | INTEGER | FK $\rightarrow$ approvals.id, NOT NULL | Approval record reference |
+| `idempotency_key` | TEXT | UNIQUE, NOT NULL | Unique hash/UUID to prevent duplicate execution |
+| `status` | TEXT | NOT NULL, DEFAULT 'pending' | `pending`, `sending`, `sent`, `failed`, `unknown` |
+| `attempt_number` | INTEGER | NOT NULL, DEFAULT 1 | Attempt counter |
+| `recipient_address` | TEXT | NOT NULL | Destination email address |
+| `message_id` | TEXT | | SMTP Message-ID if accepted |
+| `error_message` | TEXT | | Error details if failed or unknown |
+| `smtp_response` | TEXT | | Raw response from SMTP server |
+| `dry_run` | INTEGER | NOT NULL, DEFAULT 0 | 1 = Simulated dispatch (dry-run mode) |
+| `created_at` | DATETIME | NOT NULL, DEFAULT now | Record insertion timestamp |
+| `started_at` | DATETIME | | Timestamp SMTP socket was opened |
+| `completed_at` | DATETIME | | Timestamp final status was recorded |
+
+**Indexes**: `idx_send_attempts_idempotency`, `idx_send_attempts_thread_id`, `idx_send_attempts_status`
+
+---
+
+### 3.15 `outreach_events`
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `outreach_thread_id` | INTEGER | FK $\rightarrow$ outreach_threads.id, NOT NULL | Outreach thread reference |
+| `draft_id` | INTEGER | FK $\rightarrow$ drafts.id, NOT NULL | Sent draft version |
+| `approval_id` | INTEGER | FK $\rightarrow$ approvals.id, NOT NULL | Validated approval reference |
+| `send_attempt_id` | INTEGER | FK $\rightarrow$ send_attempts.id, NOT NULL | Completed send attempt |
 | `event_type` | TEXT | NOT NULL | `initial` or `followup` |
 | `followup_number` | INTEGER | | 1, 2, or 3 |
-| `sent_at` | DATETIME | NOT NULL | When the email was sent |
+| `sent_at` | DATETIME | NOT NULL | Successful dispatch timestamp |
 | `message_id` | TEXT | UNIQUE | SMTP Message-ID header value |
-| `recipient_address` | TEXT | NOT NULL | The address it was sent to |
-| `smtp_response` | TEXT | | SMTP server response |
+| `recipient_address` | TEXT | NOT NULL | Sent destination address |
+| `smtp_response` | TEXT | | Server response code |
+| `dry_run` | INTEGER | NOT NULL, DEFAULT 0 | 1 = Dispatched in dry-run mode |
 
-**Indexes**: `idx_outreach_events_outreach_thread_id`, `idx_outreach_events_message_id`
+**Indexes**: `idx_outreach_events_thread_id`, `idx_outreach_events_message_id`, `idx_outreach_events_sent_at`
 
 ---
 
-### 3.12 `followup_schedules`
-
-Planned follow-up events for each outreach thread.
+### 3.16 `followup_schedules`
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | |
-| `outreach_thread_id` | INTEGER | FK → outreach_threads.id, NOT NULL | |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `outreach_thread_id` | INTEGER | FK $\rightarrow$ outreach_threads.id, NOT NULL | Outreach thread reference |
 | `followup_number` | INTEGER | NOT NULL | 1, 2, or 3 |
-| `scheduled_date` | DATE | NOT NULL | The calendar date the follow-up is due |
+| `scheduled_date` | DATE | NOT NULL | Calendar date follow-up is due |
 | `status` | TEXT | NOT NULL, DEFAULT 'pending' | `pending`, `approved`, `sent`, `suppressed`, `cancelled` |
-| `suppressed_reason` | TEXT | | e.g., `reply_received` |
-| `suppressed_at` | DATETIME | | |
-| `created_at` | DATETIME | NOT NULL, DEFAULT now | |
-| `updated_at` | DATETIME | NOT NULL, DEFAULT now | |
+| `suppressed_reason` | TEXT | | Reason for suppression (e.g., `reply_received`) |
+| `suppressed_at` | DATETIME | | Timestamp of suppression |
+| `created_at` | DATETIME | NOT NULL, DEFAULT now | Creation timestamp |
+| `updated_at` | DATETIME | NOT NULL, DEFAULT now | Modification timestamp |
 
-**Unique constraint**: `(outreach_thread_id, followup_number)`
+**Unique Constraint**: `(outreach_thread_id, followup_number)`
+**Indexes**: `idx_followup_schedules_due`, `idx_followup_schedules_thread`
 
 ---
 
-### 3.13 `replies`
-
-Inbound replies detected via IMAP.
+### 3.17 `replies`
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | |
-| `outreach_thread_id` | INTEGER | FK → outreach_threads.id | Linked thread (null if unmatched) |
-| `in_reply_to_message_id` | TEXT | | Message-ID of the email being replied to |
-| `reply_message_id` | TEXT | UNIQUE | Message-ID of the reply |
-| `sender_address` | TEXT | NOT NULL | Who replied |
-| `subject` | TEXT | | Reply subject |
-| `received_at` | DATETIME | NOT NULL | When the reply was received |
-| `raw_snippet` | TEXT | | First 500 characters of reply body |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `outreach_thread_id` | INTEGER | FK $\rightarrow$ outreach_threads.id | Correlated outreach thread |
+| `in_reply_to_message_id` | TEXT | | Message-ID of outbound message replied to |
+| `reply_message_id` | TEXT | UNIQUE | Inbound Message-ID |
+| `sender_address` | TEXT | NOT NULL | Sender address |
+| `subject` | TEXT | | Inbound subject |
+| `received_at` | DATETIME | NOT NULL | Inbound receipt timestamp |
+| `raw_snippet` | TEXT | | Body preview (up to 500 characters) |
+
+**Indexes**: `idx_replies_thread_id`, `idx_replies_in_reply_to`
 
 ---
 
-### 3.14 `bounces`
-
-Bounce notifications detected via IMAP.
+### 3.18 `bounces`
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | |
-| `outreach_event_id` | INTEGER | FK → outreach_events.id | The send event that bounced |
-| `email_address_id` | INTEGER | FK → email_addresses.id | The address that bounced |
-| `bounce_type` | TEXT | | `hard` or `soft` |
-| `bounce_message` | TEXT | | DSN message content |
-| `detected_at` | DATETIME | NOT NULL | |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `outreach_event_id` | INTEGER | FK $\rightarrow$ outreach_events.id | Outbound event that bounced |
+| `email_address_id` | INTEGER | FK $\rightarrow$ email_addresses.id | Bounced email address |
+| `bounce_type` | TEXT | NOT NULL | `hard` or `soft` |
+| `bounce_message` | TEXT | | DSN diagnostic code / error message |
+| `detected_at` | DATETIME | NOT NULL | Detection timestamp |
+
+**Indexes**: `idx_bounces_email_address_id`
 
 ---
 
-### 3.15 `sheets_sync_state`
+### 3.19 `sheets_sync_state`
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | |
-| `entity_type` | TEXT | NOT NULL | `company`, `contact`, `opportunity`, etc. |
-| `last_sync_at` | DATETIME | | Last successful sync timestamp |
-| `sheets_id` | TEXT | | Google Sheets spreadsheet ID |
-| `sheet_name` | TEXT | | Tab name within the spreadsheet |
-| `last_sync_checksum` | TEXT | | Hash of last-synced data for change detection |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `entity_type` | TEXT | NOT NULL | `company`, `contact`, `opportunity`, `outreach` |
+| `last_sync_at` | DATETIME | | Timestamp of last successful sync |
+| `sheets_id` | TEXT | | Target Google Sheets spreadsheet ID |
+| `sheet_name` | TEXT | | Worksheet / tab name |
+| `last_sync_checksum` | TEXT | | MD5/SHA-256 hash of last synced state |
 
-**Unique constraint**: `(entity_type, sheets_id, sheet_name)`
+**Unique Constraint**: `(entity_type, sheets_id, sheet_name)`
 
 ---
 
-### 3.16 `audit_log`
-
-Immutable event log. No UPDATE or DELETE operations are permitted on this table by the application.
+### 3.20 `audit_log` (Append-Only)
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | INTEGER | PK, AUTOINCREMENT | |
-| `event_type` | TEXT | NOT NULL | e.g., `draft_generated`, `approved`, `email_sent`, `reply_received`, `bounce_detected`, `followup_suppressed`, `sync_completed` |
-| `entity_type` | TEXT | | e.g., `outreach_thread`, `contact`, `company` |
-| `entity_id` | INTEGER | | ID of the related entity |
-| `description` | TEXT | NOT NULL | Human-readable event description |
-| `metadata` | TEXT | | JSON payload with additional context |
-| `created_at` | DATETIME | NOT NULL, DEFAULT now | |
+| `id` | INTEGER | PK, AUTOINCREMENT | Internal primary key |
+| `event_type` | TEXT | NOT NULL | Event classification (e.g., `prospect_captured`, `draft_approved`, `send_attempt_started`, `email_sent`, `reply_received`, `bounce_detected`, `suppression_added`, `sync_completed`) |
+| `entity_type` | TEXT | | Target entity type (`contact`, `outreach_thread`, etc.) |
+| `entity_id` | INTEGER | | Target entity primary key |
+| `description` | TEXT | NOT NULL | Human-readable event narrative |
+| `metadata` | TEXT | | Structured JSON payload with diagnostic context |
+| `created_at` | DATETIME | NOT NULL, DEFAULT now | UTC timestamp of event |
+
+*Note*: No UPDATE or DELETE statements are permitted on `audit_log`.
 
 ---
 
-### 3.17 `app_config`
+### 3.21 `app_config`
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | `key` | TEXT | PK | Configuration key |
-| `value` | TEXT | NOT NULL | Configuration value |
-| `description` | TEXT | | Human-readable description |
-| `updated_at` | DATETIME | NOT NULL, DEFAULT now | |
+| `value` | TEXT | NOT NULL | Configuration value string |
+| `description` | TEXT | | Narrative description |
+| `updated_at` | DATETIME | NOT NULL, DEFAULT now | Update timestamp |
 
-**Standard keys**:
-- `sending_paused`: `true` or `false`
-- `daily_sending_limit`: `20` (integer as string)
-- `llm_provider`: `gemini` or `ollama`
-- `reoon_credits_used_today`: integer as string
-- `imap_poll_interval_minutes`: integer as string
+**Standard Keys**:
+- `sending_paused`: `'false'` (or `'true'`)
+- `daily_sending_limit`: `'20'`
+- `dry_run`: `'true'` (default until live sending is explicitly enabled)
+- `llm_provider`: `'gemini'` (or `'ollama'`)
+- `reoon_cache_days`: `'30'`
+- `imap_poll_interval_minutes`: `'15'`
 
 ---
 
-## 4. ER Diagram
+## 4. Complete Entity-Relationship Diagram
 
 ```mermaid
 erDiagram
-    companies {
-        int id PK
-        text external_id
-        text name
-        text type
-        text website
-        datetime created_at
-    }
-
-    opportunities {
-        int id PK
-        text external_id
-        int company_id FK
-        text type
-        text title
-        text status
-        datetime created_at
-    }
-
-    contacts {
-        int id PK
-        text external_id
-        int company_id FK
-        text first_name
-        text last_name
-        int suppressed
-        datetime created_at
-    }
-
-    contact_roles {
-        int id PK
-        int contact_id FK
-        text role
-    }
-
-    email_addresses {
-        int id PK
-        text external_id
-        int contact_id FK
-        text address
-        int is_primary
-    }
-
-    email_verifications {
-        int id PK
-        int email_address_id FK
-        text status
-        int catch_all_approved
-        datetime verified_at
-    }
-
-    opportunity_contacts {
-        int id PK
-        int opportunity_id FK
-        int contact_id FK
-    }
-
-    outreach_threads {
-        int id PK
-        text external_id
-        int opportunity_id FK
-        int contact_id FK
-        int selected_email_address_id FK
-        text status
-    }
-
-    drafts {
-        int id PK
-        int outreach_thread_id FK
-        int version
-        text draft_type
-        text subject
-        text body
-        text llm_provider
-    }
-
-    approvals {
-        int id PK
-        int draft_id FK
-        int outreach_thread_id FK
-        datetime approved_at
-    }
-
-    outreach_events {
-        int id PK
-        int outreach_thread_id FK
-        int draft_id FK
-        int approval_id FK
-        text event_type
-        datetime sent_at
-        text message_id
-    }
-
-    followup_schedules {
-        int id PK
-        int outreach_thread_id FK
-        int followup_number
-        date scheduled_date
-        text status
-    }
-
-    replies {
-        int id PK
-        int outreach_thread_id FK
-        text reply_message_id
-        datetime received_at
-    }
-
-    bounces {
-        int id PK
-        int outreach_event_id FK
-        int email_address_id FK
-        text bounce_type
-        datetime detected_at
-    }
-
-    audit_log {
-        int id PK
-        text event_type
-        text entity_type
-        int entity_id
-        text description
-        datetime created_at
-    }
-
     companies ||--o{ opportunities : "has"
-    companies ||--o{ contacts : "has"
-    contacts ||--o{ contact_roles : "has"
-    contacts ||--o{ email_addresses : "has"
-    email_addresses ||--o{ email_verifications : "verified by"
-    opportunities ||--o{ opportunity_contacts : "linked to"
-    contacts ||--o{ opportunity_contacts : "linked to"
-    opportunities ||--o{ outreach_threads : "has"
-    contacts ||--o{ outreach_threads : "has"
-    email_addresses ||--o{ outreach_threads : "selected for"
-    outreach_threads ||--o{ drafts : "has"
-    drafts ||--o| approvals : "approved by"
-    outreach_threads ||--o{ outreach_events : "produces"
-    outreach_threads ||--o{ followup_schedules : "has"
+    companies ||--o{ contacts : "employs"
+    companies ||--o{ captures : "sourced_from"
+    
+    contacts ||--o{ contact_roles : "holds"
+    contacts ||--o{ email_addresses : "owns"
+    contacts ||--o{ phone_numbers : "owns"
+    contacts ||--o{ opportunity_contacts : "linked_to"
+    opportunities ||--o{ opportunity_contacts : "linked_to"
+    
+    contacts ||--o{ captures : "sourced_from"
+    captures ||--o{ linkedin_posts : "extracts"
+    contacts ||--o{ linkedin_posts : "authors"
+    
+    email_addresses ||--o{ email_verifications : "verified_by"
+    
+    opportunities ||--o{ outreach_threads : "initiates"
+    contacts ||--o{ outreach_threads : "targets"
+    email_addresses ||--o{ outreach_threads : "selected_for"
+    
+    outreach_threads ||--o{ drafts : "contains"
+    drafts ||--o| approvals : "approved_by"
+    
+    outreach_threads ||--o{ send_attempts : "attempts"
+    drafts ||--o{ send_attempts : "dispatches"
+    approvals ||--o{ send_attempts : "authorizes"
+    
+    send_attempts ||--o| outreach_events : "results_in"
+    outreach_threads ||--o{ outreach_events : "records"
+    outreach_events ||--o{ bounces : "triggers"
+    email_addresses ||--o{ bounces : "records"
+    
+    outreach_threads ||--o{ followup_schedules : "schedules"
     outreach_threads ||--o{ replies : "receives"
-    outreach_events ||--o{ bounces : "may bounce"
 ```
 
 ---
 
-## 5. Data Integrity Rules
+## 5. Data Integrity & Deduplication Rules
 
-### 5.1 Contact Deduplication
+### 5.1 Deterministic Contact Deduplication
+1. **Primary Key: Normalized LinkedIn Profile URL**:
+   - Strip URL query parameters (e.g. `?utm_source=...`, `?miniProfileUrn=...`).
+   - Remove trailing slashes and normalize domain to `https://www.linkedin.com/in/<username>`.
+   - If a contact exists with this normalized URL, update the existing contact record and attach any new email or phone records.
+2. **Secondary Key: Normalized Email Address**:
+   - Lowercase and trim whitespace.
+   - If an existing contact already owns this email address, link the new opportunity or capture to that existing contact.
+3. **Tertiary Signal: First Name + Last Name + Company**:
+   - Do NOT automatically merge contacts based on name alone.
+   - If name and company match but LinkedIn URL is missing or differing, create the contact with `duplicate_flag = 1` and `duplicate_of_contact_id` set to the candidate contact. Surface in the local UI for user review.
 
-Before inserting a new contact, the system must check:
-1. Does a contact with the same `first_name` + `last_name` already exist at the same `company_id`?
-2. If yes, and `linkedin_url` also matches (or both are null), update the existing record rather than creating a duplicate.
-3. If a match exists but `linkedin_url` differs, treat as a distinct person and create a new record.
+### 5.2 Contact Data Provenance
+- Email addresses and phone numbers are stored as independent records.
+- Each record must store `source` (`ContactOut`, `Apollo`, `LinkedIn`, `manual`, `website`), `source_url`, and `captured_at`.
+- Never combine or concatenate multiple email addresses into a single text column.
 
-### 5.2 Email Address Deduplication
+### 5.3 Approval Integrity & Hash Matching
+- Approvals record `approved_content_hash = SHA256(recipient + "\n" + subject + "\n" + body + "\n" + draft_id + "\n" + version)`.
+- Immediately before sending, the delivery engine recalculates this hash. Any alteration between approval and send aborts the send attempt.
+- Editing a draft creates a new version (`is_edited = 1`), leaving prior approvals invalid for the new version.
 
-The `address` column in `email_addresses` has a UNIQUE constraint. If an attempt is made to associate the same email address with a different contact, the system must:
-1. Log a warning to the audit log.
-2. Surface the conflict to the user.
-3. Not silently reassign the address.
+### 5.4 Send Attempt Idempotency
+- Every send attempt generates a deterministic `idempotency_key = SHA256(thread_id + "_" + draft_id + "_" + approval_id + "_" + attempt_number)`.
+- The database enforces a `UNIQUE` constraint on `send_attempts.idempotency_key`.
 
-### 5.3 Approval Invalidation
-
-An approval is valid only for the specific `draft_id` it references. If the draft is regenerated or edited:
-1. A new draft version is created (new row).
-2. The old approval remains in the database (for audit purposes) but is not valid for the new version.
-3. The new draft version must be explicitly approved before sending.
-
-### 5.4 Catch-all Gate
-
-The sending pipeline must check the following before dispatching any email:
-1. Retrieve the latest `email_verifications` record for `selected_email_address_id`.
-2. If `status = 'catch-all'` and `catch_all_approved = 0`, block sending and return an error.
-3. If `status = 'invalid'` or `status = 'unknown'`, block sending unconditionally.
-4. If `status = 'safe'`, proceed.
-
-### 5.5 Suppression Check
-
-Before generating a draft or sending, check:
-1. `contacts.suppressed = 1` → block all activity for this contact.
-2. `outreach_threads.status = 'suppressed'` → block sending.
-3. Bounced address check: if `selected_email_address_id` has a recorded hard bounce in `bounces`, block sending.
-
-*Note on Canonical Schema*: Suppression is modeled directly on `contacts` (`suppressed`, `suppressed_reason`, `suppressed_at`), `outreach_threads` (`status = 'suppressed'`), and associated bounce/verification records. There is no separate `suppression_list` table.
-
-### 5.6 Outreach Thread Uniqueness
-
-The unique constraint on `(opportunity_id, contact_id)` in `outreach_threads` ensures one thread per person per opportunity. If a thread already exists, the existing thread must be resumed, not duplicated.
+### 5.5 Multi-Level Suppression
+- **Contact-level**: `contacts.suppressed = 1`. Blocks all outreach across all opportunities.
+- **Address-level**: `email_addresses.suppressed = 1`. Blocks outreach using this address; alternate verified addresses for the contact may still be used.
+- **Organization-level**: `companies.suppressed = 1`. Blocks outreach to any contact employed by this company.
+- Suppressing an entity immediately updates all associated pending `followup_schedules` to `status = 'cancelled'`.
