@@ -90,8 +90,11 @@ class SMTPSendError(Exception):
 import asyncio
 import hashlib
 from datetime import datetime
+from sqlalchemy import text
 
-# In-process concurrency lock to serialize sends and protect quota
+# Auxiliary in-process concurrency lock to reduce single-process contention.
+# Note: SQLite-backed transactions (BEGIN IMMEDIATE) and table UNIQUE constraints
+# are the authoritative safeguards across processes and restarts.
 delivery_lock = asyncio.Lock()
 
 async def dispatch_approved_email(
@@ -101,6 +104,8 @@ async def dispatch_approved_email(
     approval_id: int
 ) -> SendAttempt:
     async with delivery_lock:
+        # SQLite transaction coordination begins authoritatively
+        db.execute(text("BEGIN IMMEDIATE"))
         thread = db.get(OutreachThread, thread_id)
         draft = db.get(Draft, draft_id)
         approval = db.get(Approval, approval_id)
@@ -302,5 +307,6 @@ class ZohoIMAPClient:
 - Test that send-attempt is committed to database in `pending` state before SMTP transmission.
 - Test that SMTP connection failure transitions attempt to `failed` or `unknown`.
 - Test that attempts in `unknown` state are never automatically retried.
-- Test that in-process delivery lock serializes concurrent calls.
+- Test that SQLite transactional coordination and unique idempotency keys block duplicate send attempts at the database level across concurrent workers.
+- Test that auxiliary in-process delivery lock serializes concurrent threads.
 - Test dry-run mode executes state transitions and generates simulated message IDs.
