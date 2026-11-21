@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+
+{% block title %}{{ contact.first_name }} {{ contact.last_name or '' }} — Tandora{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ contact.first_name }} {{ contact.last_name or '' }}</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">
+      UUID: <code>{{ contact.external_id }}</code> &bull; Created {{ contact.created_at.strftime('%Y-%m-%d') }}
+    </p>
+  </div>
+  <div class="actions">
+    <a href="/contacts" class="btn btn-secondary">&larr; Back to Contacts</a>
+    <form action="/contacts/{{ contact.id }}/suppress" method="POST" style="display: inline;">
+      <input type="hidden" name="suppressed" value="{% if contact.suppressed %}0{% else %}1{% endif %}">
+      <input type="hidden" name="reason" value="Toggled from contact detail">
+      <button type="submit" class="btn {% if contact.suppressed %}btn-secondary{% else %}btn-danger{% endif %}">
+        {% if contact.suppressed %}Unsuppress Contact{% else %}Suppress Contact{% endif %}
+      </button>
+    </form>
+  </div>
+</div>
+
+{% if contact.duplicate_flag %}
+<div class="alert alert-warning">
+  <strong>Potential Duplicate Flagged:</strong>
+  This contact was flagged because First Name + Last Name + Company match an existing prospect.
+  {% if candidate_contact %}
+    Candidate original:
+    <a href="/contacts/{{ candidate_contact.id }}" style="font-weight: 600; text-decoration: underline; color: inherit;">
+      {{ candidate_contact.first_name }} {{ candidate_contact.last_name or '' }} (ID #{{ candidate_contact.id }}) &rarr;
+    </a>
+  {% elif contact.duplicate_of_contact_id %}
+    Candidate Contact ID: <a href="/contacts/{{ contact.duplicate_of_contact_id }}" style="font-weight: 600; text-decoration: underline; color: inherit;">#{{ contact.duplicate_of_contact_id }}</a>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if contact.suppressed %}
+<div class="alert alert-danger">
+  <strong>Contact Suppressed:</strong> All outbound outreach to this person across all opportunities is blocked.
+  {% if contact.suppressed_reason %}<div>Reason: {{ contact.suppressed_reason }} (at {{ contact.suppressed_at.strftime('%Y-%m-%d %H:%M UTC') }})</div>{% endif %}
+</div>
+{% endif %}
+
+<!-- Contact Profile Overview -->
+<div class="panel">
+  <div class="panel-header">Contact Overview</div>
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+    <div>
+      <div style="font-size: 0.8rem; color: var(--text-muted);">Organization</div>
+      <div>
+        {% if contact.company %}
+          <a href="/organizations/{{ contact.company.id }}" style="font-weight: 600; color: var(--primary);">{{ contact.company.name }}</a>
+          {% if contact.company.suppressed %}<span class="badge badge-danger" style="margin-left: 0.3rem;">ORG SUPPRESSED</span>{% endif %}
+        {% else %}
+          <span style="color: var(--text-muted);">Unassigned</span>
+        {% endif %}
+      </div>
+    </div>
+    <div>
+      <div style="font-size: 0.8rem; color: var(--text-muted);">Headline</div>
+      <div style="font-weight: 500;">{{ contact.headline or 'Not specified' }}</div>
+    </div>
+    <div>
+      <div style="font-size: 0.8rem; color: var(--text-muted);">Canonical LinkedIn URL</div>
+      <div>
+        {% if contact.normalized_linkedin_url %}
+          <a href="{{ contact.normalized_linkedin_url }}" target="_blank" rel="noreferrer">{{ contact.normalized_linkedin_url }} &nearr;</a>
+        {% elif contact.linkedin_url %}
+          <a href="{{ contact.linkedin_url }}" target="_blank" rel="noreferrer">{{ contact.linkedin_url }} &nearr;</a>
+        {% else %}
+          <span style="color: var(--text-muted);">None</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if contact.notes %}
+  <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+    <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">Notes</div>
+    <p style="white-space: pre-wrap; font-size: 0.9rem;">{{ contact.notes }}</p>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Email Addresses with Provenance -->
+<div class="panel">
+  <div class="panel-header">
+    <span>Email Addresses with Provenance</span>
+  </div>
+  {% if contact.emails %}
+  <table>
+    <thead>
+      <tr>
+        <th>Email Address</th>
+        <th>Source</th>
+        <th>Captured At</th>
+        <th>Status</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for email in contact.emails %}
+      <tr>
+        <td>
+          <code>{{ email.address }}</code>
+          {% if email.is_primary %}<span class="badge badge-neutral" style="margin-left: 0.3rem;">PRIMARY</span>{% endif %}
+        </td>
+        <td><span class="badge badge-info">{{ email.source }}</span></td>
+        <td style="font-size: 0.8rem; color: var(--text-muted);">{{ email.captured_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td>
+          {% if email.suppressed %}
+            <span class="badge badge-danger">SUPPRESSED</span>
+          {% else %}
+            <span class="badge badge-success">ACTIVE</span>
+          {% endif %}
+        </td>
+        <td>
+          <form action="/contacts/{{ contact.id }}/emails/{{ email.id }}/suppress" method="POST" style="display: inline;">
+            <input type="hidden" name="suppressed" value="{% if email.suppressed %}0{% else %}1{% endif %}">
+            <input type="hidden" name="reason" value="Toggled from contact email list">
+            <button type="submit" class="btn btn-sm {% if email.suppressed %}btn-secondary{% else %}btn-danger{% endif %}">
+              {% if email.suppressed %}Unsuppress{% else %}Suppress{% endif %}
+            </button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">No email addresses recorded for this contact.</p>
+  {% endif %}
+
+  <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+    <h4 style="font-size: 0.9rem; margin-bottom: 0.75rem;">+ Add Email Address</h4>
+    <form action="/contacts/{{ contact.id }}/emails" method="POST" style="display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap;">
+      <div style="flex: 2; min-width: 200px;">
+        <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Address *</label>
+        <input type="email" name="address" required class="form-control" placeholder="name@company.com">
+      </div>
+      <div style="flex: 1; min-width: 140px;">
+        <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Source *</label>
+        <select name="source" class="form-control">
+          <option value="manual">manual</option>
+          <option value="ContactOut">ContactOut</option>
+          <option value="Apollo">Apollo</option>
+          <option value="LinkedIn">LinkedIn</option>
+          <option value="website">website</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-secondary btn-sm" style="height: 36px;">Add Email</button>
+    </form>
+  </div>
+</div>
+
+<!-- Phone Numbers with Provenance -->
+<div class="panel">
+  <div class="panel-header">Phone Numbers</div>
+  {% if contact.phones %}
+  <table>
+    <thead>
+      <tr>
+        <th>Number</th>
+        <th>Type</th>
+        <th>Source</th>
+        <th>Captured At</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in contact.phones %}
+      <tr>
+        <td><code>{{ p.number }}</code></td>
+        <td>{{ p.type }}</td>
+        <td><span class="badge badge-info">{{ p.source }}</span></td>
+        <td style="font-size: 0.8rem; color: var(--text-muted);">{{ p.captured_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">No phone numbers recorded.</p>
+  {% endif %}
+
+  <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+    <h4 style="font-size: 0.9rem; margin-bottom: 0.75rem;">+ Add Phone Number</h4>
+    <form action="/contacts/{{ contact.id }}/phones" method="POST" style="display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap;">
+      <div style="flex: 2; min-width: 180px;">
+        <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Phone Number *</label>
+        <input type="text" name="number" required class="form-control" placeholder="+1 (555) 012-3456">
+      </div>
+      <div style="flex: 1; min-width: 120px;">
+        <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Type</label>
+        <select name="type" class="form-control">
+          <option value="mobile">Mobile</option>
+          <option value="work">Work</option>
+          <option value="direct">Direct</option>
+        </select>
+      </div>
+      <div style="flex: 1; min-width: 120px;">
+        <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Source</label>
+        <select name="source" class="form-control">
+          <option value="manual">manual</option>
+          <option value="ContactOut">ContactOut</option>
+          <option value="Apollo">Apollo</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-secondary btn-sm" style="height: 36px;">Add Phone</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
