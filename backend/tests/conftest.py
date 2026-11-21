@@ -2,18 +2,21 @@
 
 import pytest
 from sqlalchemy import create_engine, event
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
 from app.main import app
-from app.database import get_db, Base
+from app.database import get_db
+from app.models import Base
 
 
 @pytest.fixture(scope="function")
 def test_engine():
-    """Create an in-memory SQLite engine with foreign key enforcement."""
+    """Create an in-memory SQLite engine with foreign key enforcement and StaticPool."""
     engine = create_engine(
         "sqlite:///:memory:",
-        connect_args={"check_same_thread": False}
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
 
     @event.listens_for(engine, "connect")
