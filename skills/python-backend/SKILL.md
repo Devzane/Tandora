@@ -23,15 +23,18 @@ Read this skill before writing any Python module in the `backend/` directory.
 ```
 backend/
 ├── app/
-│   ├── main.py           # FastAPI app instance, startup, middleware
+│   ├── main.py           # FastAPI app instance, startup, static mounting
 │   ├── config.py         # Settings class, env var loading
-│   ├── database.py       # SQLAlchemy engine, session factory
-│   ├── models/           # SQLAlchemy ORM models
+│   ├── database.py       # SQLAlchemy engine, session factory, WAL listener
+│   ├── models/           # SQLAlchemy ORM models (21 canonical tables)
 │   ├── schemas/          # Pydantic request/response schemas
-│   ├── api/v1/           # FastAPI routers
+│   ├── api/v1/           # Headless JSON API routers
+│   ├── ui/               # Server-rendered local web UI routers (Stage 1)
+│   ├── templates/        # Jinja2 HTML templates (13 core views)
+│   ├── static/           # CSS, icons, minimal vanilla JS
 │   ├── services/         # Business logic (no direct DB in routers)
-│   ├── integrations/     # External service clients
-│   └── providers/        # LLM provider abstraction
+│   ├── integrations/     # External service clients (Reoon, Gemini, Zoho, Sheets)
+│   └── providers/        # LLM provider abstraction (Gemini, Ollama)
 ├── tests/
 ├── alembic/
 └── pyproject.toml
