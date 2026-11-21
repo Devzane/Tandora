@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Tandora — Lead Management & Outreach{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <header>
+    <a href="/" class="brand">
+      <span>Tandora</span>
+      <span class="brand-badge">Local Single-User</span>
+    </a>
+    <nav>
+      <a href="/" class="{% if active_tab == 'dashboard' %}active{% endif %}">Dashboard</a>
+      <a href="/organizations" class="{% if active_tab == 'organizations' %}active{% endif %}">Organizations</a>
+      <a href="/opportunities" class="{% if active_tab == 'opportunities' %}active{% endif %}">Opportunities</a>
+      <a href="/contacts" class="{% if active_tab == 'contacts' %}active{% endif %}">Contacts</a>
+      <a href="/suppressions" class="{% if active_tab == 'suppressions' %}active{% endif %}">Suppressions</a>
+      <a href="/docs" target="_blank" style="color: var(--text-muted); font-size: 0.85rem;">API Docs &nearr;</a>
+    </nav>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>
+    <p>Tandora v0.1.0 &bull; Local Windows 11 Outreach Engine &bull; Strictly bound to 127.0.0.1:8000</p>
+  </footer>
+</body>
+</html>
