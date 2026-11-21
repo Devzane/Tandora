@@ -87,13 +87,14 @@ flowchart TD
 
 ---
 
-## Workflow 3: Capture Visible Third-Party Overlays (ContactOut & Apollo)
+## Workflow 3: Capture Third-Party Overlays (ContactOut & Apollo) with Essential Manual Fallback
 
-**Purpose**: Capture contact information displayed by user's installed third-party extensions when rendered in the active page DOM.
+**Purpose**: Capture contact information displayed by the user's installed third-party extensions when available, with a mandatory manual paste fallback.
 
 **Compliance & Boundary Rules**:
 - *No undocumented API calls, no token scraping, no server-side crawling.*
-- *Read only visibly rendered DOM elements in the active browser tab.*
+- *Read visibly rendered DOM elements in the active browser tab only when accessible.*
+- *DOM extraction is strictly conditional and best-effort: closed shadow roots, isolated extension contexts, and sandboxed iframes prevent content script traversal. The manual paste fallback is essential and mandatory.*
 
 ```mermaid
 flowchart TD
@@ -101,8 +102,8 @@ flowchart TD
     B --> C[Provider renders visible email/phone information]
     C --> D[User opens Tandora Extension]
     D --> E{Are overlay elements accessible in active DOM?}
-    E -->|Yes| F[Content script extracts visible emails, phones, names]
-    E -->|No / Shadow DOM| G[Manual Fallback: User copies text from overlay into Tandora form]
+    E -->|Yes (Conditional)| F[Content script extracts visible emails, phones, names]
+    E -->|No / Closed Shadow DOM| G[Essential Manual Fallback: User copies text from overlay into Tandora form]
     F --> H[Tandora parser detects provider source: ContactOut or Apollo]
     G --> H
     H --> I[Popup displays extracted emails and phones with individual provenance tags]
@@ -115,12 +116,12 @@ flowchart TD
 1. User browses to a prospect profile and manually opens the ContactOut or Apollo.io overlay.
 2. The third-party extension displays work emails, personal emails, or direct phone numbers.
 3. User opens the Tandora extension.
-4. Tandora attempts to read visible overlay elements in the active tab.
+4. Tandora content script attempts to inspect visible overlay containers in the active tab (conditional/best-effort).
 5. If accessible: Tandora extracts contact strings and tags the source as `ContactOut` or `Apollo`.
-6. **Manual Fallback**: If the provider panel is isolated inside a closed shadow root or iframe:
-   - User highlights and copies the text from the provider panel.
+6. **Essential Manual Fallback (Mandatory Core Feature)**: When the provider panel is rendered inside a closed shadow root (`shadowRoot` mode `closed`), sandboxed iframe, or isolated extension context:
+   - User highlights and copies the visible contact text from the third-party panel.
    - User pastes the text into Tandora's popup **"Quick Import / Paste"** box.
-   - Client-side parser extracts email patterns, phone patterns, and names into structured fields.
+   - Client-side heuristic parser extracts email patterns, phone patterns, and names into structured fields.
 7. User reviews the structured emails and phone numbers.
 8. Extension submits to `POST /api/v1/captures`.
 9. Backend saves each email address in `email_addresses` and each phone number in `phone_numbers` as an independent record with `source = 'ContactOut'` or `source = 'Apollo'`, `source_url`, and `captured_at`.
@@ -246,20 +247,21 @@ flowchart TD
 
 **Steps**:
 1. Dispatch triggered manually in UI or via Scheduler.
-2. In-process delivery serialization lock acquired.
-3. Pre-send engine executes all 10 checks against persistent database records.
-4. If any check fails: send is aborted, `send_blocked` recorded in `audit_log`, lock released.
-5. Unique `idempotency_key` generated.
-6. Backend inserts `send_attempts` record with `status = 'pending'` and **COMMITS** the database transaction.
-7. Backend transitions `send_attempts.status = 'sending'`.
-8. **Mode Execution**:
+2. In-process delivery serialization lock acquired (auxiliary process safeguard).
+3. SQLite transaction initiated (`BEGIN IMMEDIATE`) for authoritative quota verification, unique idempotency key validation, and attempt creation.
+4. Pre-send engine executes all 10 checks against persistent database records.
+5. If any check fails: send is aborted, `send_blocked` recorded in `audit_log`, transaction rolled back, in-process lock released.
+6. Unique deterministic `idempotency_key` generated (`SHA256(thread_id + "_" + draft_id + "_" + approval_id + "_" + attempt_number)`).
+7. Backend inserts `send_attempts` record with `status = 'pending'` and **COMMITS** the database transaction.
+8. Backend transitions `send_attempts.status = 'sending'`.
+9. **Mode Execution**:
    - *If `dry_run = true`*: Simulated delivery; update `send_attempts.status = 'sent'`, `dry_run = 1`.
    - *If `dry_run = false`*: Open TLS 587 socket to Zoho SMTP; transmit message.
-9. **Outcome Handling**:
-   - *SMTP 250 OK*: Update `send_attempts.status = 'sent'`, record `message_id`. Insert `outreach_events` record. Schedule follow-ups for days 3, 7, 14. Increment daily counter.
-   - *SMTP 5xx Permanent Failure*: Update `send_attempts.status = 'failed'`, record error message.
-   - *Connection Timeout / Mid-flight Disconnect*: Update `send_attempts.status = 'unknown'`. Flag for manual user reconciliation. **NEVER auto-resend an unknown attempt.**
-10. Release delivery lock.
+10. **Outcome Handling**:
+    - *SMTP 250 OK*: Update `send_attempts.status = 'sent'`, record `message_id`. Insert `outreach_events` record. Schedule follow-ups for days 3, 7, 14. Increment daily counter.
+    - *SMTP 5xx Permanent Failure*: Update `send_attempts.status = 'failed'`, record error message.
+    - *Connection Timeout / Mid-flight Disconnect*: Update `send_attempts.status = 'unknown'`. Flag for manual user reconciliation. **NEVER auto-resend an unknown attempt.**
+11. Release in-process delivery lock.
 
 ---
 
