@@ -73,10 +73,10 @@ Extracts:
 
 *Critical Distinction*: The author of a LinkedIn post is not necessarily the person whose profile is being viewed. Tandora captures the post author as a potential decision-maker while preserving the post text as context for the opportunity.
 
-#### C. ContactOut & Apollo.io Overlays
-- Read only visibly rendered text elements in the active tab DOM when the user has opened these panels.
-- Extract visible work/personal emails and phone numbers.
-- Tag each channel with its source: `ContactOut` or `Apollo`.
+#### C. ContactOut & Apollo.io Overlays (Strictly Conditional)
+- DOM extraction is strictly best-effort and conditional: closed shadow roots (`shadowRoot` mode `closed`), isolated extension interfaces, and sandboxed iframes can inherently prevent content scripts from accessing or traversing these third-party elements.
+- When accessible in the active tab DOM, extract visible work/personal emails and phone numbers.
+- Tag each extracted channel with its detected source: `ContactOut` or `Apollo`.
 
 ### 3. Compliance & Boundary Rules
 - **Never** reverse-engineer ContactOut or Apollo private APIs.
@@ -85,15 +85,15 @@ Extracts:
 - **Never** run automated profile-browsing or scraping loops.
 - Extract data only upon explicit user action from the active tab.
 
-### 4. Manual Fallback Form & Heuristic Parser
-When a third-party extension renders inside an inaccessible closed shadow DOM or iframe:
-- The popup provides a **"Quick Paste / Manual Import"** textarea.
-- The user pastes text copied from the provider overlay.
-- Client-side parser extracts:
+### 4. Essential Manual Paste Fallback Form (Mandatory Core Feature)
+Because third-party extensions frequently isolate their interfaces in closed shadow roots or sandboxed frames, DOM extraction must never be assumed to succeed. The manual paste fallback is an essential, first-class requirement:
+- The popup prominently provides a **"Quick Paste / Manual Import"** interface.
+- The user copies text from ContactOut, Apollo, or any external tool and pastes it into the form.
+- Client-side heuristic parser extracts:
   - Emails using regex: `/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g`
   - Phone numbers using international/E.164 patterns.
-  - Names and titles from preceding lines.
-- Extracted values populate the editable review form before submission.
+  - Names, titles, and company names from surrounding text blocks.
+- Extracted values automatically populate the editable review form before user submission.
 
 ### 5. Structured Capture Payload Schema
 
