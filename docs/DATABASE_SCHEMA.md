@@ -526,3 +526,16 @@ erDiagram
 - **Address-level**: `email_addresses.suppressed = 1`. Blocks outreach using this address; alternate verified addresses for the contact may still be used.
 - **Organization-level**: `companies.suppressed = 1`. Blocks outreach to any contact employed by this company.
 - Suppressing an entity immediately updates all associated pending `followup_schedules` to `status = 'cancelled'`.
+
+### 5.6 Authoritative Transactional Concurrency Coordination
+SQLite-backed transactional coordination and database constraints serve as the authoritative coordination layer across multiple processes, workers, and application restarts:
+1. **Daily Sending Quota**: Enforced by checking `COUNT(*)` of `send_attempts` where `status IN ('sent', 'sending')` for the current UTC date inside an immediate transaction (`BEGIN IMMEDIATE`) before persisting a `pending` attempt.
+2. **Duplicate Send Prevention**: Enforced authoritatively by the `UNIQUE(idempotency_key)` database constraint on `send_attempts`. Any duplicate send attempt raises an `IntegrityError` at the database level and is aborted.
+3. **Concurrent Follow-Up Execution**: Enforced by atomic status transitions on `followup_schedules`:
+   ```sql
+   UPDATE followup_schedules
+   SET status = 'in_progress', updated_at = CURRENT_TIMESTAMP
+   WHERE id = :schedule_id AND status = 'scheduled';
+   ```
+   Only the process or worker that successfully updates 1 row claims the execution rights.
+4. **Auxiliary In-Process Lock**: An in-memory mutex (`threading.Lock`) acts as a secondary optimization to reduce SQLite busy handler contention in a single process, but database transactions and constraints remain the authoritative enforcement mechanism.
