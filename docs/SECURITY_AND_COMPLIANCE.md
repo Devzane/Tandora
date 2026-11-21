@@ -1,307 +1,170 @@
 # Security and Compliance — Tandora Lead Management & Outreach Application
 
-## 1. Secrets Management
+## 1. Secrets Management & Configuration Strategy
 
-### 1.1 Rules
+### 1.1 Strict Rules
+- **No secrets in source code**: API keys, passwords, and tokens must never appear in Python files, JavaScript files, or any committed repository files.
+- **No secrets in version control**: The `.env` file is explicitly ignored in `.gitignore`. It must never be committed.
+- **Environment variables are authoritative**: All sensitive credentials are loaded via `python-dotenv` at runtime.
 
-- **No secrets in source code.** API keys, passwords, and tokens must never appear in Python files, JavaScript files, or any file that could be committed to version control.
-- **No secrets in version control.** The `.env` file must be listed in `.gitignore`. It must never be committed.
-- **Environment variables are the authority.** All sensitive configuration is loaded from environment variables at application startup.
+### 1.2 Required & Optional Environment Variables
 
-### 1.2 Required Environment Variables
+| Variable | Purpose | Classification |
+|----------|---------|----------------|
+| `EXTENSION_API_SECRET` | Shared secret header (`X-Extension-Secret`) for Chrome Extension | Core Local Security |
+| `DATABASE_PATH` | Path to SQLite database file (default: `./data/tandora.db`) | Local Storage |
+| `DRY_RUN` | Enable simulated delivery mode without real SMTP dispatch (default: `true`) | Delivery Safeguard |
+| `GEMINI_API_KEY` | Gemini API key for AI draft generation | Integration |
+| `REOON_API_KEY` | Reoon Email Verifier API key | Integration |
+| `ZOHO_SMTP_USERNAME` | Zoho Mail sender email address | Integration |
+| `ZOHO_SMTP_PASSWORD` | Zoho Mail application-specific password | Integration |
+| `ZOHO_IMAP_USERNAME` | Zoho Mail inbox monitoring address | Integration |
+| `ZOHO_IMAP_PASSWORD` | Zoho Mail IMAP application-specific password | Integration |
+| `GOOGLE_CREDENTIALS_PATH` | Path to Google Cloud Service Account credentials JSON | Integration |
+| `GOOGLE_SHEETS_ID` | Target spreadsheet ID for bidirectional sync | Integration |
+| `OLLAMA_BASE_URL` | Base URL for local Ollama instance (default: `http://127.0.0.1:11434`) | Integration |
 
-| Variable | Purpose |
-|----------|---------|
-| `GEMINI_API_KEY` | Gemini API authentication |
-| `REOON_API_KEY` | Reoon Email Verifier API key |
-| `ZOHO_SMTP_USERNAME` | Zoho SMTP login (email address) |
-| `ZOHO_SMTP_PASSWORD` | Zoho SMTP app password |
-| `ZOHO_IMAP_USERNAME` | Zoho IMAP login (email address) |
-| `ZOHO_IMAP_PASSWORD` | Zoho IMAP app password |
-| `GOOGLE_CREDENTIALS_PATH` | Path to Google API credentials JSON file |
-| `GOOGLE_SHEETS_ID` | Target spreadsheet ID |
-| `EXTENSION_API_SECRET` | Shared secret for Chrome Extension authentication |
-| `DATABASE_PATH` | Path to SQLite database file |
-| `OLLAMA_BASE_URL` | Ollama local server URL (optional) |
+### 1.3 Integration-Specific On-Demand Validation
+The application boots cleanly without requiring all external service credentials upfront. 
 
-### 1.3 `.env` File Template
-
-A `.env.example` file (containing no real values, only key names) must be committed to the repository. The actual `.env` file must never be committed.
-
-### 1.4 Credential Loading & Validation Strategy
-
-The backend loads configuration from environment variables via `python-dotenv`. To ensure modularity and operational reliability, the application must start without requiring all external API credentials to be present upfront.
-
-Each external integration validates its specific credentials when activated or when an operation requires them (on-demand validation):
-- If an operation is invoked without required credentials (e.g. attempting Reoon verification without `REOON_API_KEY`, or sending via Zoho without `ZOHO_SMTP_PASSWORD`), the system returns a clear, actionable error message naming the missing environment variable.
-- Unconfigured integrations must never block unrelated application functionality (e.g., missing verification or LLM keys must not prevent capturing leads, browsing companies, or running database migrations).
-- Credentials must never be hard-coded in source files or exposed in logs and API responses.
+- Unconfigured integrations do not block unrelated features or application startup.
+- When an operation requires an unconfigured service (e.g., verifying an address without `REOON_API_KEY`), the service raises a clear, actionable error identifying the missing variable.
+- Secrets are never exposed in logs, error traces, or API responses.
 
 ---
 
-## 2. API Authentication
+## 2. API & Network Security
 
-### 2.1 Chrome Extension Authentication
+### 2.1 Localhost Binding
+- The FastAPI application binds strictly to `127.0.0.1:8000`.
+- Binding to `0.0.0.0` or public interfaces is strictly prohibited.
+- No remote access, tunneling, or public port forwarding is configured.
 
-The Chrome Extension communicates with the FastAPI backend over `localhost`. To prevent unauthorized requests from other local processes:
-
-- A shared secret (`EXTENSION_API_SECRET`) is configured in both the extension's storage and the backend's `.env`.
-- The extension includes this secret as an HTTP header (`X-Extension-Secret`) on every request.
-- The backend validates this header on all endpoints used by the extension.
-- This secret is not a user-facing credential. It is set once during installation and never changed in normal operation.
-
-> **Note**: This is a minimal local authentication mechanism. It is not equivalent to full user authentication. Its purpose is to prevent other local processes from accidentally or maliciously posting data to the backend.
-
-### 2.2 Backend API Access
-
-In the initial single-user local deployment:
-- The FastAPI backend binds to `127.0.0.1` only. It must not bind to `0.0.0.0`.
-- No public-facing API is exposed.
-- No TLS is required for localhost communication.
-
-If the deployment ever changes to allow network access, TLS and proper authentication must be added before that change.
-
-### 2.3 Google Sheets API Authentication
-
-Authentication uses a Google service account credentials JSON file, the path to which is provided via `GOOGLE_CREDENTIALS_PATH`. This file must:
-- Be stored outside the repository directory.
-- Have read permissions restricted to the current user only.
-- Be backed up securely.
+### 2.2 Chrome Extension Authentication
+- Every request from the Chrome Extension to `/api/v1/captures` must include the `X-Extension-Secret` header.
+- The extension stores this secret securely in `chrome.storage.local`.
+- The backend validates the secret via dependency injection (`require_extension_secret`). Missing or incorrect secrets return HTTP 401.
 
 ---
 
-## 3. Database Security
+## 3. Database Security & Integrity
 
-### 3.1 SQLite File Security
+### 3.1 SQL Injection Prevention
+- All database interactions use SQLAlchemy 2.x parameterized statements (`select()`, `insert()`).
+- Raw SQL string concatenation is strictly prohibited.
+- `PRAGMA foreign_keys = ON` is enforced on every SQLite connection.
 
-- The database file must be stored in a location accessible only to the current user.
-- File system permissions must restrict access to the application user.
-- The database file path is configured via `DATABASE_PATH` in the `.env` file.
-
-### 3.2 SQL Injection Prevention
-
-- All database queries must use SQLAlchemy's parameterized query mechanisms.
-- Raw SQL string formatting with user-supplied data is prohibited.
-- ORM methods and SQLAlchemy Core with bound parameters are the only acceptable query patterns.
-
-### 3.3 Audit Log Immutability
-
-- The `audit_log` table must never have UPDATE or DELETE operations performed on it by the application.
-- The application must not expose any API endpoint that modifies or deletes audit log entries.
-- Database-level constraints (triggers or application-level enforcement) should prevent deletion.
+### 3.2 Audit Log Immutability
+- The `audit_log` table is strictly append-only (INSERT-only).
+- No code path or API endpoint may execute `UPDATE` or `DELETE` on `audit_log`.
 
 ---
 
-## 4. Email Security
+## 4. Approval Integrity & Content Hashing
 
-### 4.1 SMTP Authentication
+### 4.1 SHA-256 Approval Content Hash
+To guarantee that the exact text approved by the user is what gets transmitted, Tandora enforces cryptographic content hashing:
 
-- Zoho SMTP uses TLS (port 587 with STARTTLS or port 465 with SSL).
-- Authentication uses an app-specific password stored in `ZOHO_SMTP_PASSWORD`.
-- The main account password must not be used. App passwords are preferred for security isolation.
+$$\text{approved\_content\_hash} = \text{SHA256}(\text{recipient\_address} + \text{"\textbackslash n"} + \text{subject} + \text{"\textbackslash n"} + \text{body} + \text{"\textbackslash n"} + \text{str(draft\_id)} + \text{"\textbackslash n"} + \text{str(version)})$$
 
-### 4.2 IMAP Authentication
+### 4.2 Pre-Send Hash Validation
+Immediately before dispatching an email:
+1. The delivery service recalculates the SHA-256 hash from the current draft content and selected recipient.
+2. It compares this value against `approvals.approved_content_hash`.
+3. If the hashes differ, sending is immediately aborted and flagged as an approval integrity failure.
 
-- Zoho IMAP uses TLS (port 993).
-- Authentication uses an app-specific password stored in `ZOHO_IMAP_PASSWORD`.
-
-### 4.3 Message-ID Tracking
-
-- Every outbound email must have a unique `Message-ID` header set by the backend.
-- The `Message-ID` is stored in `outreach_events.message_id`.
-- This enables reliable reply and thread matching via IMAP.
-
-### 4.4 Email Content Security
-
-- Email bodies must not contain user-supplied HTML that has not been sanitized.
-- If HTML emails are supported, all user-editable content must be escaped before inclusion in the email body.
-- LLM-generated content must be treated as untrusted input and validated for length and character encoding before sending.
+### 4.3 Invalidation on Edit
+Any manual edit or regeneration of a draft automatically creates a new draft version (`is_edited = 1`, `version = N+1`). The approval record for the prior version is invalid for the new version, requiring explicit re-approval.
 
 ---
 
-## 5. Privacy
+## 5. Email Delivery Reliability & Persistent Send Attempts
 
-### 5.1 Personal Data Handling
+### 5.1 Distributed Transaction Limitation
+SMTP and SQLite do not participate in a shared, two-phase distributed transaction. If the application crashes or network drops after SMTP accepts an email but before SQLite commits, a duplicate-delivery risk exists.
 
-The application stores personal data: names, email addresses, LinkedIn URLs. As this is a single-user application used for professional outreach:
+To address this limitation, Tandora implements a multi-step persistent lifecycle state machine:
+$$\text{Pre-Send Checks} \rightarrow \text{Persist 'pending' Attempt} \rightarrow \text{Commit DB} \rightarrow \text{Transition 'sending'} \rightarrow \text{Dispatch SMTP} \rightarrow \text{Commit 'sent'/'failed'/'unknown'}$$
 
-- Contact data must not be shared with third-party services beyond what is explicitly required (Reoon for verification, Zoho for sending, Gemini for draft generation).
-- When calling the Gemini API, the minimum necessary contact context should be included in prompts. Full database exports must not be sent to external AI services.
-- The user is responsible for ensuring their outreach activity complies with applicable laws (CAN-SPAM, GDPR where applicable).
+### 5.2 Send Attempt Lifecycle States
 
-### 5.2 Contact Suppression
+| State | Definition | Next Action |
+|-------|------------|-------------|
+| `pending` | Pre-send checks passed; unique send-attempt committed to DB | Proceed to open SMTP socket |
+| `sending` | Socket opened; message transmitted to SMTP relay | Await SMTP 250 response |
+| `sent` | SMTP server confirmed receipt (`250 OK`); Message-ID recorded | Record `outreach_event`; schedule follow-ups |
+| `failed` | SMTP relay definitively rejected message (e.g. 5xx error) | Log error; quota not incremented; no resend |
+| `unknown` | Socket timed out or dropped mid-flight; delivery indeterminate | **NEVER auto-resend**; flag for manual user reconciliation |
 
-- The `contacts.suppressed` flag provides a local suppression mechanism.
-- Suppressed contacts must never receive outbound emails.
-- If a contact requests to be removed, the user must set `suppressed = 1` with an appropriate reason.
-- Suppression is permanent within the system and cannot be automatically reversed.
+### 5.3 Idempotency & Concurrency Serialization
+- **Idempotency Key**: Generated as `SHA256(thread_id + "_" + draft_id + "_" + approval_id + "_" + attempt_number)` and enforced by a `UNIQUE` constraint on `send_attempts.idempotency_key`.
+- **Delivery Lock**: All outbound sending is serialized in Python using an in-process concurrency lock to prevent race conditions on daily quotas and simultaneous duplicate sends.
 
-### 5.3 Data Retention
-
-- The application does not implement automatic data expiration in the initial version.
-- The user is responsible for periodically reviewing and cleaning stale data.
-
----
-
-## 6. Suppression Rules
-
-Suppression is tracked directly on primary database entities rather than in a separate `suppression_list` table:
-- Contact-level suppression: `contacts.suppressed = 1`, with `suppressed_reason` and `suppressed_at`.
-- Thread-level suppression: `outreach_threads.status = 'suppressed'`.
-- Address-level suppression: Hard bounce records in `bounces` table, or `invalid`/`unknown` status in `email_verifications`.
-
-The following conditions must permanently block outreach for a contact:
-
-| Condition | Action |
-|-----------|--------|
-| `contacts.suppressed = 1` | Block all activity for this contact |
-| `outreach_threads.status = 'suppressed'` | Block sending on this thread |
-| `email_addresses` has a `bounces` record with `bounce_type = 'hard'` | Block use of this address |
-| `email_verifications.status = 'invalid'` | Block use of this address |
-| `email_verifications.status = 'unknown'` | Block use of this address |
-| `email_verifications.status = 'catch-all'` AND `catch_all_approved = 0` | Block use of this address until approved |
-
-Suppression checks must run at draft generation time AND at send time. Suppression can be imposed between generation and sending. All suppression events are recorded immutably in `audit_log`.
+### 5.4 Dry-Run Mode
+- Controlled by `DRY_RUN = true` (default in development and testing).
+- Simulates complete pre-send checks, approval hash verification, send-attempt state transitions, and follow-up scheduling without establishing external SMTP connections.
+- Requires explicit user configuration to switch to live sending.
 
 ---
 
-## 7. Audit Logging
+## 6. Safe Sending Controls (10 Mandatory Pre-Send Checks)
 
-### 7.1 Events That Must Be Logged
+Every outbound email dispatch must satisfy all 10 checks against persistent database records:
 
-| Event Type | Description |
-|------------|-------------|
-| `opportunity_captured` | A new opportunity was captured via the extension or API |
-| `contact_added` | A new contact was added |
-| `email_added` | An email address was added to a contact |
-| `email_verified` | An email address was verified via Reoon |
-| `catch_all_approved` | A user approved a catch-all email address |
-| `draft_generated` | A draft was generated by an LLM |
-| `draft_edited` | A draft was manually edited |
-| `draft_approved` | A draft was approved for sending |
-| `email_sent` | An email was successfully sent |
-| `followup_scheduled` | A follow-up was scheduled |
-| `followup_suppressed` | A follow-up was suppressed (e.g., due to a reply) |
-| `followup_sent` | A follow-up email was sent |
-| `reply_received` | A reply was detected in the inbox |
-| `bounce_detected` | A bounce notification was received |
-| `contact_suppressed` | A contact was marked as suppressed |
-| `sync_completed` | A Google Sheets sync cycle completed |
-| `sync_conflict` | A sync conflict was detected |
-| `send_blocked` | A send was blocked (quota, pause, suppression, missing approval) |
-| `global_pause_toggled` | The global sending pause was enabled or disabled |
+1. ✅ **Exact Version Approval**: Valid `approvals` record exists referencing the exact current `draft_id`.
+2. ✅ **Global Pause Disabled**: `app_config.sending_paused == 'false'`.
+3. ✅ **Daily Quota Available**: Today's sent count from `outreach_events` $< 20$ messages globally.
+4. ✅ **Contact Not Suppressed**: `contacts.suppressed == 0`.
+5. ✅ **Address Not Suppressed**: `email_addresses.suppressed == 0` and no hard bounce in `bounces`.
+6. ✅ **Verification Eligibility**: Selected email address status is `safe` or approved `catch-all`.
+7. ✅ **Catch-All Approval**: Explicit manual approval granted (`catch_all_approved == 1`) if status is `catch-all`.
+8. ✅ **No Duplicate Recipient**: No existing `outreach_events` record for this thread and event/followup type.
+9. ✅ **Thread Eligibility**: `outreach_threads.status` is active and not `suppressed`, `replied`, `bounced`, or `closed`.
+10. ✅ **Content Integrity**: Draft content SHA-256 hash matches `approvals.approved_content_hash`.
 
-### 7.2 Log Entry Requirements
-
-Each log entry must include:
-- `event_type`: The event identifier from the table above.
-- `entity_type` and `entity_id`: The primary entity involved.
-- `description`: A human-readable summary.
-- `metadata`: A JSON object with relevant context (e.g., draft version, LLM provider used, Reoon status).
-- `created_at`: The UTC timestamp of the event.
-
-### 7.3 Immutability
-
-The application must not expose any DELETE or UPDATE operations on the audit log. No code path may modify or delete audit log entries.
+If any check fails, dispatch is aborted, a `send_blocked` entry is recorded in `audit_log`, and the daily quota is not incremented.
 
 ---
 
-## 8. Provider Restrictions
+## 7. Privacy, Third-Party Compliance & Outreach Regulations
 
-### 8.1 Gemini API
+### 7.1 Third-Party Extension Boundaries (ContactOut & Apollo)
+- **Zero API Scraping**: Tandora never interacts with, reverse-engineers, or calls ContactOut or Apollo backend servers.
+- **Active DOM Only**: The extension reads only visibly rendered text elements in the user's active browser tab when opened.
+- **Manual Fallback**: If an overlay is inaccessible or encapsulated in a closed shadow root, Tandora provides a paste-and-parse manual fallback form.
+- **User Initiation**: Data is extracted only upon explicit user action (clicking Capture or pressing `Alt+Shift+T`). No background DOM scraping.
 
-- Only the Gemini API key provided in `GEMINI_API_KEY` may be used.
-- The model to use must be configurable (not hardcoded), defaulting to a stable Gemini model.
-- Prompt content must not include raw credentials, database connection strings, or file system paths.
+### 7.2 LinkedIn Terms Compliance
+- No automated profile-discovery loops, scraping bots, or background crawling.
+- Captures are strictly user-initiated from pages the user has manually navigated to.
+- Preserves post author identity as distinct from profile owners.
 
-### 8.2 Reoon API
+### 7.3 Email Verification is Not Consent
+- Reoon verification confirms deliverability only. It does not imply consent.
+- Outreach messages must include a clear, natural-language opt-out statement.
 
-- API calls must use the key in `REOON_API_KEY`.
-- The system must track credit consumption and log it.
-- If the Reoon API returns an error, the system must not silently treat the address as verified. It must return an error to the user.
+### 7.4 Multi-Level Suppression
+- **Contact-Level**: `contacts.suppressed = 1`. Permanently blocks outreach to that individual across all opportunities.
+- **Address-Level**: `email_addresses.suppressed = 1`. Blocks outreach using that specific email address.
+- **Organization-Level**: `companies.suppressed = 1`. Blocks outreach to any contact employed by that organization.
+- **Auto-Cancellation**: Suppressing an entity immediately cancels all associated pending `followup_schedules`.
 
-### 8.3 Ollama
-
-- Ollama must only be called if `llm_provider = 'ollama'` in `app_config`.
-- The Ollama base URL must come from `OLLAMA_BASE_URL`.
-- If Ollama is unavailable, the system must return a clear error rather than falling back to Gemini silently.
-
----
-
-## 9. Safe Sending Controls
-
-### 9.1 Pre-Send Checklist (10 Mandatory Checks)
-
-Before every outbound send, the following 10 checks must be verified programmatically against persistent database records (never relying solely on in-memory counters):
-
-1. ✅ **Exact Version Approval**: An approval record exists in `approvals` referencing the exact current `draft_id`.
-2. ✅ **Global Pause Disabled**: The global pause toggle is OFF (`app_config.sending_paused = 'false'`).
-3. ✅ **Daily Quota Available**: Today's sent count from `outreach_events` is strictly less than the daily limit (`app_config.daily_sending_limit`, max 20).
-4. ✅ **Contact Not Suppressed**: The recipient contact is active (`contacts.suppressed = 0`).
-5. ✅ **Address Not Suppressed**: The selected email address has no hard bounce record in `bounces`.
-6. ✅ **Verification Eligibility**: The selected email address has a valid verification status (`safe` or approved `catch-all`).
-7. ✅ **Catch-All Approval**: If status is `catch-all`, explicit manual approval has been recorded (`catch_all_approved = 1`).
-8. ✅ **No Duplicate Recipient**: No existing `outreach_events` record exists for this thread with the same `event_type` and `followup_number`.
-9. ✅ **Thread Eligibility**: The outreach thread is active and eligible (`outreach_threads.status` is not suppressed, replied, bounced, or closed).
-10. ✅ **Content Integrity**: The draft message content has not changed since approval was granted.
-
-If any check fails, the send is aborted and a `send_blocked` entry is recorded in `audit_log` with the failure reason.
-
-### 9.2 Daily Quota Management
-
-- The daily sent count is stored in the database (via `outreach_events` count for today) rather than in-memory.
-- This ensures the quota is correctly enforced after a process restart.
-- The quota resets at midnight (local time).
-
-### 9.3 Global Pause
-
-- The global pause flag is stored in `app_config` with key `sending_paused`.
-- Toggling it writes an audit log entry: `global_pause_toggled`.
-- The scheduler must check this flag before every send attempt.
-
-### 9.4 One Address Per Thread
-
-- The `outreach_threads.selected_email_address_id` is set when the thread is created and must not change.
-- The sending code must always use `selected_email_address_id` for dispatch. It must not iterate over all contact email addresses.
+### 7.5 SPF, DKIM & DMARC Deliverability Requirements
+Before switching `DRY_RUN = false` for live Zoho sending, the user must ensure their custom domain is configured with:
+- **SPF**: Valid TXT record including `v=spf1 include:zoho.com ~all`.
+- **DKIM**: Valid domain key TXT record configured in Zoho Mail admin.
+- **DMARC**: Policy TXT record (e.g. `v=DMARC1; p=none; ...`) to protect domain reputation.
+- The 20-message daily limit is Tandora's internal safety cap to protect domain warm-up and account standing.
 
 ---
 
-## 10. Failure Handling
+## 8. Failure Handling & Recovery
 
-### 10.1 SMTP Failure
-
-- If the SMTP send fails (connection error, authentication failure, rejection): do not create an `outreach_events` record.
-- Write an audit log entry: `email_send_failed` with the error message.
-- Return a clear error to the caller.
-- The daily quota must not be incremented on failure.
-
-### 10.2 IMAP Failure
-
-- If the IMAP poll fails: log the error.
-- Do not mark messages as read if processing was incomplete.
-- Retry on the next scheduled poll cycle.
-
-### 10.3 LLM Failure
-
-- If the LLM API returns an error: do not create a draft record.
-- Return the error to the user.
-- The user may retry draft generation.
-
-### 10.4 Reoon Failure
-
-- If Reoon returns an error: do not store a verification result.
-- Do not treat the address as verified.
-- Return the error to the user.
-
-### 10.5 Google Sheets Failure
-
-- If the Sheets API fails during sync: roll back any partial changes.
-- Write an audit log entry with the error.
-- Do not update `last_sync_at` if the sync did not complete successfully.
-
-### 10.6 Scheduler Failure
-
-- If the scheduler encounters an error processing a job: log the error.
-- Do not mark the follow-up as sent.
-- Retry on the next scheduler run.
-- If a job fails repeatedly (more than 3 times): mark the follow-up as `error` status and notify via log.
+| Failure Mode | Detection | System Action |
+|--------------|-----------|---------------|
+| SMTP 5xx Permanent Failure | SMTP response code | Mark send attempt `failed`; log error; do not increment quota; do not retry automatically |
+| SMTP Connection Timeout | Socket timeout exception | Mark send attempt `unknown`; flag in UI for manual review; never auto-resend |
+| IMAP Connection Failure | Poller connection exception | Log error in audit log; retry on next 15-minute polling cycle |
+| Reoon API Downtime | HTTP 5xx or connection error | Abort verification; return actionable error; address remains unverified |
+| LLM API Outage | Gemini/Ollama HTTP error | Abort draft generation; return error to user; no draft version created |
+| Application Restart Mid-Queue | Startup recovery routine | Scans SQLite for overdue follow-ups, re-verifies 10 pre-send checks, resumes safely |
