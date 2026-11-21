@@ -10,6 +10,8 @@ from app.schemas.company import (
     CompanyResponse,
     CompanySuppressionRequest,
 )
+from app.schemas.opportunity import OpportunityResponse
+from app.schemas.contact import ContactResponse
 from app.schemas.common import PaginatedResponse
 from app.services.organization_service import (
     create_company,
@@ -17,7 +19,9 @@ from app.services.organization_service import (
     list_companies,
     update_company,
     set_company_suppression,
+    list_opportunities,
 )
+from app.services.contact_service import list_contacts
 
 router = APIRouter(prefix="/companies", tags=["Companies"])
 
@@ -81,3 +85,24 @@ def set_company_suppression_endpoint(
     db.commit()
     db.refresh(company)
     return company
+
+
+@router.get("/{company_id}/opportunities", response_model=list[OpportunityResponse])
+def get_company_opportunities_endpoint(company_id: int, db: Session = Depends(get_db)):
+    """Retrieve all opportunities belonging to a company."""
+    company = get_company(db, company_id)
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+    items, _ = list_opportunities(db, company_id=company_id, limit=100)
+    return items
+
+
+@router.get("/{company_id}/contacts", response_model=list[ContactResponse])
+def get_company_contacts_endpoint(company_id: int, db: Session = Depends(get_db)):
+    """Retrieve all contacts employed by or associated with a company."""
+    company = get_company(db, company_id)
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+    items, _ = list_contacts(db, company_id=company_id, limit=100)
+    return items
+
