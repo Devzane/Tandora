@@ -53,8 +53,8 @@ The application binds strictly to `127.0.0.1:8000`. No cloud infrastructure, con
   - LinkedIn posts (extracts post author name, author LinkedIn URL, headline, post URL, post excerpt, timestamp, mentioned companies; keeps post author distinct from profile viewed).
   - LinkedIn company pages and job listings.
   - Arbitrary prospect websites and career pages.
-  - Visible ContactOut and Apollo.io browser-extension overlays and panels (when rendered in the active DOM).
-- **Manual Fallback**: Provides a clean paste-and-parse interface within the popup when third-party extension overlays are isolated in shadow DOM or inaccessible contexts.
+  - Visible ContactOut and Apollo.io browser-extension overlays and panels (strictly best-effort and conditional when rendered in the active DOM; closed shadow roots, isolated extension contexts, and sandboxed frames can prevent DOM access).
+- **Essential Manual Paste Fallback**: Provides a first-class, mandatory paste-and-parse interface within the popup when third-party extension overlays are isolated in closed shadow roots, sandboxed iframes, or inaccessible extension contexts.
 - **Review Before Submit**: Displays all extracted data in an editable popup form allowing user review, correction, and annotation prior to persistence.
 - **Provenance Tagging**: Tags each extracted email and phone with its detected source (`ContactOut`, `Apollo`, `LinkedIn`, `manual`).
 - **Least-Privilege Security**: Requests only `activeTab`, `scripting`, and `storage`. Restricts network access exclusively to `http://127.0.0.1:8000/*`. Avoids `<all_urls>`.
@@ -63,8 +63,9 @@ The application binds strictly to `127.0.0.1:8000`. No cloud infrastructure, con
 
 **Responsibilities**:
 - Single source of truth for all application state.
-- Enforces relational integrity with `PRAGMA foreign_keys = ON` on every connection.
-- Stores 20 normalized tables covering organizations, opportunities, contacts, roles, emails, phones, captures, posts, threads, drafts, approvals, send attempts, events, schedules, replies, bounces, sync state, and audit logs.
+- Authoritative transactional coordination for daily sending quotas, duplicate prevention, concurrent follow-up claims, and idempotency across processes and restarts.
+- Enforces relational integrity with `PRAGMA foreign_keys = ON` and `PRAGMA journal_mode = WAL` on every connection.
+- Stores 21 canonical tables covering organizations, opportunities, contacts, roles, emails, phones, verifications, captures, posts, threads, drafts, approvals, send attempts, events, schedules, replies, bounces, sync state, audit logs, and app config.
 - Stores immutable event records in `audit_log` (INSERT-only).
 
 ### 2.5 Approval & Content Hashing Service
@@ -81,9 +82,10 @@ The application binds strictly to `127.0.0.1:8000`. No cloud infrastructure, con
 **Responsibilities**:
 - Executes the persistent send attempt lifecycle:
   $$\text{Pre-Send Checks} \rightarrow \text{Persist 'pending' Attempt} \rightarrow \text{Commit DB} \rightarrow \text{Transition 'sending'} \rightarrow \text{Dispatch SMTP} \rightarrow \text{Commit 'sent'/'failed'/'unknown'}$$
-- Prevents duplicate sends using unique idempotency keys per thread action.
-- Serializes send operations in Python using an in-process asyncio/threading lock to eliminate concurrency race conditions on daily quotas.
-- Manages the daily sending quota (maximum 20 emails globally) based on persistent records in `outreach_events`.
+- Prevents duplicate sends using unique idempotency keys (`send_attempts.idempotency_key` with a database-level `UNIQUE` constraint).
+- Authoritatively enforces daily sending quotas (maximum 20 emails globally), duplicate send prevention, and concurrent follow-up claims using SQLite-backed transactional coordination (`BEGIN IMMEDIATE` atomic check-and-insert).
+- Employs an auxiliary in-process lock (`threading.Lock`) as a secondary safeguard to reduce in-process contention, while SQLite constraints remain authoritative across processes and restarts.
+- Manages the daily sending quota based on persistent records in `outreach_events` and `send_attempts`.
 - Enforces dry-run mode (`dry_run = true` by default) for zero-risk pipeline validation.
 - Flags delivery anomalies as `unknown` when SMTP connections drop mid-flight; disables automated resending on `unknown` attempts and mandates manual reconciliation.
 
@@ -314,7 +316,7 @@ Windows 11 Laptop
 | Persistence Engine | SQLite + WAL mode | Zero infrastructure cost, instant backups, handles single-user volume easily, zero network latency. |
 | Approval Content Integrity | SHA-256 approved_content_hash | Mathematically guarantees that the message sent is bit-for-bit identical to what the user reviewed. |
 | Delivery Reliability | Multi-step persistent `send_attempts` lifecycle | Eliminates duplicate sends on process crashes; SMTP and SQLite cannot form a 2-phase commit, so lifecycle staging isolates failures. |
-| Concurrency Control | In-process delivery serialization lock | Prevents concurrent follow-up triggers or API requests from exceeding the daily 20-message quota. |
+| Concurrency Control & Quota Coordination | SQLite Transactions & Constraints (Authoritative) + In-Process Mutex (Auxiliary) | Authoritative protection across multiple processes and restarts via SQLite `BEGIN IMMEDIATE` transactions and unique constraints; in-memory lock is only a secondary process-level helper. |
 | Deduplication Strategy | Normalized LinkedIn URL $\rightarrow$ Email $\rightarrow$ Name+Company Flag | Deterministic matching without accidentally conflating distinct individuals who share identical names. |
-| Third-Party Overlay Extraction | Visible DOM reading + Manual Form Fallback | Respects browser boundaries and compliance rules without fragile scraping or undocumented API reverse-engineering. |
+| Third-Party Overlay Extraction | Conditional DOM Reading + Essential Manual Paste Fallback | Inspection of third-party overlays (ContactOut, Apollo) is strictly conditional and best-effort due to closed shadow roots; manual paste fallback is essential and mandatory. |
 | Scheduler State | SQLite `followup_schedules` authoritative | Survives laptop sleeps, restarts, and crashes; APScheduler merely polls the persistent schedule. |
