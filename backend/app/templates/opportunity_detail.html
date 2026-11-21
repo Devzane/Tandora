@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}{{ opportunity.title }} — Tandora{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ opportunity.title }}</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">
+      Company: <a href="/organizations/{{ opportunity.company.id }}" style="font-weight: 600; color: var(--primary);">{{ opportunity.company.name }}</a>
+      &bull; Status: <span class="badge badge-info">{{ opportunity.status }}</span>
+    </p>
+  </div>
+  <div class="actions">
+    <a href="/opportunities" class="btn btn-secondary">&larr; Back</a>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-header">Opportunity Details</div>
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+    <div>
+      <div style="font-size: 0.8rem; color: var(--text-muted);">Type</div>
+      <div><span class="badge badge-neutral">{{ opportunity.type }}</span></div>
+    </div>
+    <div>
+      <div style="font-size: 0.8rem; color: var(--text-muted);">Status</div>
+      <div><span class="badge badge-info">{{ opportunity.status }}</span></div>
+    </div>
+    <div>
+      <div style="font-size: 0.8rem; color: var(--text-muted);">Source Posting</div>
+      <div>
+        {% if opportunity.source_url %}
+          <a href="{{ opportunity.source_url }}" target="_blank" rel="noreferrer">{{ opportunity.source_url }} &nearr;</a>
+        {% else %}
+          None
+        {% endif %}
+      </div>
+    </div>
+    <div>
+      <div style="font-size: 0.8rem; color: var(--text-muted);">UUID</div>
+      <div style="font-size: 0.85rem;"><code>{{ opportunity.external_id }}</code></div>
+    </div>
+  </div>
+
+  {% if opportunity.description %}
+  <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+    <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">Description / Scope</div>
+    <div style="white-space: pre-wrap; font-size: 0.9rem;">{{ opportunity.description }}</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
