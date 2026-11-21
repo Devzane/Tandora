@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.company import Company
 from app.models.opportunity import Opportunity
 from app.models.contact import Contact
+from app.models.opportunity_contact import OpportunityContact
 from app.models.outreach_thread import OutreachThread
 from app.models.followup_schedule import FollowupSchedule
 from app.schemas.company import CompanyCreate, CompanyUpdate
@@ -206,3 +207,81 @@ def update_opportunity(db: Session, opportunity_id: int, data: OpportunityUpdate
         entity_id=opportunity.id,
     )
     return opportunity
+
+
+# --- Opportunity - Contact Association Operations ---
+
+def link_contact_to_opportunity(db: Session, opportunity_id: int, contact_id: int) -> OpportunityContact:
+    """Link a contact to an opportunity via the opportunity_contacts join table."""
+    opportunity = db.get(Opportunity, opportunity_id)
+    if not opportunity:
+        raise ValueError(f"Opportunity with ID {opportunity_id} not found")
+    contact = db.get(Contact, contact_id)
+    if not contact:
+        raise ValueError(f"Contact with ID {contact_id} not found")
+
+    existing = db.scalar(
+        select(OpportunityContact).where(
+            OpportunityContact.opportunity_id == opportunity_id,
+            OpportunityContact.contact_id == contact_id,
+        )
+    )
+    if existing:
+        return existing
+
+    link = OpportunityContact(opportunity_id=opportunity_id, contact_id=contact_id)
+    db.add(link)
+    db.flush()
+    write_audit_log(
+        db,
+        event_type="opportunity_contact_linked",
+        description=f"Linked contact ID {contact_id} to opportunity ID {opportunity_id}",
+        entity_type="opportunity",
+        entity_id=opportunity_id,
+    )
+    return link
+
+
+def unlink_contact_from_opportunity(db: Session, opportunity_id: int, contact_id: int) -> bool:
+    """Unlink a contact from an opportunity."""
+    link = db.scalar(
+        select(OpportunityContact).where(
+            OpportunityContact.opportunity_id == opportunity_id,
+            OpportunityContact.contact_id == contact_id,
+        )
+    )
+    if not link:
+        return False
+    db.delete(link)
+    db.flush()
+    write_audit_log(
+        db,
+        event_type="opportunity_contact_unlinked",
+        description=f"Unlinked contact ID {contact_id} from opportunity ID {opportunity_id}",
+        entity_type="opportunity",
+        entity_id=opportunity_id,
+    )
+    return True
+
+
+def get_opportunity_contacts(db: Session, opportunity_id: int) -> list[Contact]:
+    """Retrieve all contacts linked to a specific opportunity."""
+    query = (
+        select(Contact)
+        .join(OpportunityContact, OpportunityContact.contact_id == Contact.id)
+        .where(OpportunityContact.opportunity_id == opportunity_id)
+        .order_by(Contact.full_name.asc())
+    )
+    return list(db.execute(query).scalars().all())
+
+
+def get_contact_opportunities(db: Session, contact_id: int) -> list[Opportunity]:
+    """Retrieve all opportunities linked to a specific contact."""
+    query = (
+        select(Opportunity)
+        .join(OpportunityContact, OpportunityContact.opportunity_id == Opportunity.id)
+        .where(OpportunityContact.contact_id == contact_id)
+        .order_by(Opportunity.created_at.desc())
+    )
+    return list(db.execute(query).scalars().all())
+
