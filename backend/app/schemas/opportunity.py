@@ -34,3 +34,13 @@ class OpportunityResponse(OpportunityBase):
     sheets_last_synced_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class OpportunityContactResponse(BaseModel):
+    id: int
+    opportunity_id: int
+    contact_id: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
