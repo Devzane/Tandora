@@ -7,7 +7,7 @@ from alembic import context
 # Add current directory to path
 sys.path.insert(0, os.path.abspath("."))
 
-from app.database import Base
+from app.models import Base
 from app.config import get_settings
 
 config = context.config
