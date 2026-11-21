@@ -1,6 +1,6 @@
 ---
 name: security-engineering
-description: Secrets management, API security, input validation, access control, privacy, secure logging, and email outreach safeguards for Tandora.
+description: Secrets management, API security, input validation, SHA-256 approval hashing, send-attempt lifecycle, multi-level suppression, and outreach compliance safeguards for Tandora.
 risk: low
 source: project
 date_added: '2026-11-21'
@@ -10,17 +10,15 @@ date_added: '2026-11-21'
 
 ## Purpose
 
-This skill covers all security engineering standards for Tandora: credential management, API security, input validation, audit logging, suppression enforcement, and outbound outreach safeguards.
+This skill covers all security engineering standards for Tandora: credential management, API security, SHA-256 approval hashing, the persistent send-attempt lifecycle, multi-level suppression enforcement, and outbound compliance safeguards.
 
 ## When to Use
 
-Read this skill before implementing authentication, credential loading, audit logging, suppression logic, or sending safeguards.
+Read this skill before implementing authentication, credential handling, approval logic, outbound delivery guards, suppression systems, or audit log writers.
 
 ## Required Engineering Practices
 
-### Credential Management
-
-Configuration is loaded from environment variables using `python-dotenv`:
+### 1. Secrets Management & On-Demand Validation
 
 ```python
 # app/config.py
@@ -28,13 +26,13 @@ from pydantic_settings import BaseSettings
 from functools import lru_cache
 
 class Settings(BaseSettings):
-    # Core app settings
     database_path: str = "./data/tandora.db"
     daily_sending_limit: int = 20
     llm_provider: str = "gemini"
     extension_api_secret: str = ""
+    dry_run: bool = True  # Default to true for safety
 
-    # External integration credentials (validated lazily on-demand)
+    # External credentials (validated lazily on demand)
     gemini_api_key: str | None = None
     reoon_api_key: str | None = None
     zoho_smtp_username: str | None = None
@@ -53,190 +51,203 @@ def get_settings() -> Settings:
     return Settings()
 ```
 
-Each integration validates its required credentials on-demand upon invocation:
-```python
-def require_reoon_api_key() -> str:
-    key = get_settings().reoon_api_key
-    if not key:
-        raise ValueError("REOON_API_KEY environment variable is not configured. Please set it in .env to use email verification.")
-    return key
-```
-This ensures unconfigured external services do not prevent application startup or block unrelated features.
+### 2. Approval Integrity & SHA-256 Content Hashing
 
-### Extension API Authentication
+An email may only be sent if its content is bit-for-bit identical to what the user explicitly approved.
 
 ```python
-# app/dependencies/auth.py
-from fastapi import Header, HTTPException
-from app.config import get_settings
+import hashlib
 
-async def require_extension_secret(
-    x_extension_secret: str = Header(..., alias="X-Extension-Secret")
-) -> None:
-    if x_extension_secret != get_settings().extension_api_secret:
-        raise HTTPException(
-            status_code=401,
-            detail={"error": "invalid_secret", "message": "Extension secret is missing or invalid"}
-        )
-```
+def calculate_approved_content_hash(
+    recipient: str,
+    subject: str,
+    body: str,
+    draft_id: int,
+    version: int
+) -> str:
+    payload = f"{recipient.strip().lower()}\n{subject.strip()}\n{body.strip()}\n{draft_id}\n{version}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-Apply to protected capture routes:
-```python
-@router.post("/captures", dependencies=[Depends(require_extension_secret)])
-def create_capture(...):
-    ...
-```
-
-### Input Validation & Sanitization
-
-```python
-from pydantic import BaseModel, EmailStr, field_validator
-
-class EmailAddressCreate(BaseModel):
-    address: EmailStr
-    source: str | None = None
-    is_primary: bool = False
-
-class ContactCreate(BaseModel):
-    first_name: str
-    last_name: str | None = None
-    linkedin_url: str | None = None
-
-    @field_validator("first_name")
-    @classmethod
-    def name_not_empty(cls, v: str) -> str:
-        cleaned = v.strip()
-        if not cleaned:
-            raise ValueError("first_name cannot be empty")
-        return cleaned
-
-    @field_validator("linkedin_url")
-    @classmethod
-    def valid_linkedin_url(cls, v: str | None) -> str | None:
-        if v and not v.startswith("https://www.linkedin.com/"):
-            raise ValueError("LinkedIn URL must start with https://www.linkedin.com/")
-        return v
-```
-
-### Suppression Enforcement
-
-```python
-def check_suppression(db: Session, contact_id: int, thread_id: int | None = None) -> None:
-    contact = db.get(Contact, contact_id)
-    if contact and contact.suppressed:
-        raise ContactSuppressedException(
-            f"Contact {contact_id} is suppressed: {contact.suppressed_reason}"
-        )
-    
-    if thread_id:
-        thread = db.get(OutreachThread, thread_id)
-        if thread and thread.status == "suppressed":
-            raise ContactSuppressedException(
-                f"Outreach thread {thread_id} is suppressed"
-            )
-
-class ContactSuppressedException(Exception):
-    pass
-```
-
-### Audit Log Writer
-
-The audit log is append-only. Never perform UPDATE or DELETE on `audit_log`:
-
-```python
-# app/services/audit_service.py
-import json
-import logging
-from datetime import datetime
-from sqlalchemy.orm import Session
-from app.models.audit_log import AuditLog
-
-logger = logging.getLogger(__name__)
-
-def write_audit_log(
-    db: Session,
-    event_type: str,
-    entity_type: str | None = None,
-    entity_id: int | None = None,
-    description: str = "",
-    metadata: dict | None = None
-) -> None:
-    entry = AuditLog(
-        event_type=event_type,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        description=description,
-        metadata=json.dumps(metadata or {}),
-        created_at=datetime.utcnow()
+def verify_approval_content_integrity(
+    draft: Draft,
+    recipient: str,
+    approval: Approval
+) -> bool:
+    current_hash = calculate_approved_content_hash(
+        recipient=recipient,
+        subject=draft.subject,
+        body=draft.body,
+        draft_id=draft.id,
+        version=draft.version
     )
-    db.add(entry)
-    logger.info("AUDIT: %s | %s:%s | %s", event_type, entity_type, entity_id, description)
+    return current_hash == approval.approved_content_hash
 ```
 
-### Safe Send Guard
+### 3. Persistent Send-Attempt Lifecycle
 
-`safe_send` is the single authorized pathway for dispatching emails:
+SMTP and SQLite cannot participate in a shared two-phase distributed commit. Therefore, the send process must be staged persistently:
+
+$$\text{Pre-Send Checks} \rightarrow \text{Persist 'pending'} \rightarrow \text{Commit DB} \rightarrow \text{Transition 'sending'} \rightarrow \text{Dispatch SMTP} \rightarrow \text{Commit 'sent'/'failed'/'unknown'}$$
 
 ```python
-def safe_send(
+import asyncio
+
+# Global delivery lock serializing all send operations
+delivery_lock = asyncio.Lock()
+
+async def execute_secure_send(
     db: Session,
     thread_id: int,
     draft_id: int,
     approval_id: int
-) -> str:
-    # 1. Enforce all 10 pre-send safety checks against persistent DB records
-    pre_send_checks(db, thread_id, draft_id, approval_id)
+) -> SendAttempt:
+    async with delivery_lock:
+        thread = db.get(OutreachThread, thread_id)
+        draft = db.get(Draft, draft_id)
+        approval = db.get(Approval, approval_id)
+        email_addr = db.get(EmailAddress, thread.selected_email_address_id)
+        
+        # 1. Enforce all 10 pre-send checks
+        pre_send_checks(db, thread_id, draft_id, approval_id)
+        
+        # 2. Verify SHA-256 content hash
+        if not verify_approval_content_integrity(draft, email_addr.address, approval):
+            raise PreSendCheckError("Draft content has changed since approval; re-approval required.")
 
-    thread = db.get(OutreachThread, thread_id)
-    draft = db.get(Draft, draft_id)
-    email_addr = db.get(EmailAddress, thread.selected_email_address_id)
+        # 3. Create persistent SendAttempt in 'pending' state
+        idempotency_key = hashlib.sha256(
+            f"{thread_id}_{draft_id}_{approval_id}".encode()
+        ).hexdigest()
+        
+        attempt = SendAttempt(
+            outreach_thread_id=thread_id,
+            draft_id=draft_id,
+            approval_id=approval_id,
+            idempotency_key=idempotency_key,
+            status="pending",
+            recipient_address=email_addr.address,
+            dry_run=1 if get_settings().dry_run else 0
+        )
+        db.add(attempt)
+        db.commit()  # CRITICAL: Commit before opening external socket
 
-    thread_msg_id = get_thread_message_id(db, thread_id) if draft.draft_type == "followup" else None
+        # 4. Transition to 'sending'
+        attempt.status = "sending"
+        attempt.started_at = datetime.utcnow()
+        db.commit()
 
-    # 2. Dispatch
-    client = ZohoSMTPClient()
-    message_id = client.send(
-        to_address=email_addr.address,
-        subject=draft.subject,
-        body=draft.body,
-        thread_message_id=thread_msg_id
-    )
+        # 5. Dispatch
+        if get_settings().dry_run:
+            attempt.status = "sent"
+            attempt.completed_at = datetime.utcnow()
+            attempt.message_id = f"<dry-run-{idempotency_key[:12]}@local>"
+            record_outreach_event(db, attempt)
+            db.commit()
+            return attempt
 
-    # 3. Record sent event
-    event = OutreachEvent(
-        outreach_thread_id=thread_id,
-        draft_id=draft_id,
-        approval_id=approval_id,
-        event_type=draft.draft_type,
-        sent_at=datetime.utcnow(),
-        message_id=message_id,
-        recipient_address=email_addr.address
-    )
-    db.add(event)
-
-    write_audit_log(
-        db, "email_sent", "outreach_thread", thread_id,
-        f"Email sent to {email_addr.address}", {"message_id": message_id}
-    )
-    return message_id
+        try:
+            client = ZohoSMTPClient()
+            message_id = client.send(
+                to_address=email_addr.address,
+                subject=draft.subject,
+                body=draft.body
+            )
+            attempt.status = "sent"
+            attempt.message_id = message_id
+            attempt.completed_at = datetime.utcnow()
+            record_outreach_event(db, attempt)
+            db.commit()
+            return attempt
+        except SMTPSendError as e:
+            attempt.status = "failed"
+            attempt.error_message = str(e)
+            attempt.completed_at = datetime.utcnow()
+            db.commit()
+            raise
+        except Exception as e:
+            # Socket timeout or dropped connection: state is INDETERMINATE
+            attempt.status = "unknown"
+            attempt.error_message = f"Indeterminate state: {e}"
+            attempt.completed_at = datetime.utcnow()
+            db.commit()
+            # NEVER auto-resend unknown attempts
+            raise IndeterminateDeliveryError("SMTP connection dropped mid-flight; delivery state is unknown.") from e
 ```
 
-## Common Mistakes
+### 4. 10 Mandatory Pre-Send Checks
 
-- Placing the extension secret in plaintext client scripts instead of `chrome.storage.local`.
-- Falling back silently when security/pre-send checks fail.
-- Allowing update/delete endpoints on `audit_log`.
-- Overlooking suppression checks during follow-up dispatch.
+```python
+def pre_send_checks(db: Session, thread_id: int, draft_id: int, approval_id: int) -> None:
+    config = get_app_config(db)
+    thread = db.get(OutreachThread, thread_id)
+    draft = db.get(Draft, draft_id)
+    contact = db.get(Contact, thread.contact_id)
+    email_addr = db.get(EmailAddress, thread.selected_email_address_id)
+    company = db.get(Company, contact.company_id) if contact.company_id else None
 
-## Security Considerations
+    # 1. Approval exists
+    approval = db.get(Approval, approval_id)
+    if not approval or approval.draft_id != draft_id:
+        raise PreSendCheckError("No valid approval record for this exact draft version")
 
-- FastAPI backend binds exclusively to `127.0.0.1` (never `0.0.0.0`).
-- The `.env` file must be git-ignored.
-- All secrets are injected through environment variables.
-- Audit logging records every critical transition (creation, verification, draft, approval, sending, pause, suppression).
+    # 2. Global pause
+    if config.get("sending_paused") == "true":
+        raise PreSendCheckError("Global sending pause is active")
 
-## Project-Specific Constraints
+    # 3. Daily quota (< 20 sent today)
+    today_sent = count_sent_today(db)
+    limit = int(config.get("daily_sending_limit", "20"))
+    if today_sent >= limit:
+        raise PreSendCheckError(f"Daily quota of {limit} reached ({today_sent} sent today)")
 
-- Single user local deployment on Windows 11.
-- No commercial auth/multi-tenant overhead.
-- Safe sending controls strictly adhered to without exception.
+    # 4. Contact suppression
+    if contact.suppressed:
+        raise PreSendCheckError(f"Contact is suppressed: {contact.suppressed_reason}")
+
+    # 5. Address suppression
+    if email_addr.suppressed:
+        raise PreSendCheckError(f"Email address is suppressed: {email_addr.suppressed_reason}")
+    if has_hard_bounce(db, email_addr.id):
+        raise PreSendCheckError("Selected address has a recorded hard bounce")
+
+    # 6. Organization suppression
+    if company and company.suppressed:
+        raise PreSendCheckError(f"Organization is suppressed: {company.suppressed_reason}")
+
+    # 7. Verification eligibility
+    usable, reason = is_address_usable(db, email_addr.id)
+    if not usable:
+        raise PreSendCheckError(f"Address verification ineligible: {reason}")
+
+    # 8. Catch-all approval
+    verification = get_latest_verification(db, email_addr.id)
+    if verification and verification.status == "catch-all" and not verification.catch_all_approved:
+        raise PreSendCheckError("Catch-all address requires separate explicit manual approval")
+
+    # 9. Duplicate recipient check
+    if has_already_sent_type(db, thread_id, draft.draft_type, draft.followup_number):
+        raise PreSendCheckError("Message of this type has already been sent to this thread")
+
+    # 10. Thread eligibility
+    if thread.status in ("suppressed", "replied", "bounced", "closed"):
+        raise PreSendCheckError(f"Outreach thread not eligible for sending (status: {thread.status})")
+```
+
+### 5. Multi-Level Suppression Rules
+- **Contact-Level**: `contacts.suppressed = 1`. Blocks all outreach to this individual across all opportunities.
+- **Address-Level**: `email_addresses.suppressed = 1`. Blocks sending to this specific address.
+- **Organization-Level**: `companies.suppressed = 1`. Blocks outreach to all contacts employed by this organization.
+- **Auto-Cancellation**: Suppressing an entity immediately updates all associated active `followup_schedules` to `status = 'cancelled'`.
+
+### 6. Audit Logging Standard
+- The `audit_log` table is append-only. No code path may issue `UPDATE` or `DELETE` statements on `audit_log`.
+
+---
+
+## Testing Requirements
+
+- Test approval hash mismatch raises error and blocks send.
+- Test that send-attempt record is committed before SMTP transmission.
+- Test that unknown send attempts are flagged and never auto-retried.
+- Test that delivery lock prevents concurrent duplicate sends.
+- Test that dry-run mode simulates delivery without opening SMTP sockets.
