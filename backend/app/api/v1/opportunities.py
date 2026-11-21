@@ -8,13 +8,18 @@ from app.schemas.opportunity import (
     OpportunityCreate,
     OpportunityUpdate,
     OpportunityResponse,
+    OpportunityContactResponse,
 )
+from app.schemas.contact import ContactResponse
 from app.schemas.common import PaginatedResponse
 from app.services.organization_service import (
     create_opportunity,
     get_opportunity,
     list_opportunities,
     update_opportunity,
+    link_contact_to_opportunity,
+    unlink_contact_from_opportunity,
+    get_opportunity_contacts,
 )
 
 router = APIRouter(prefix="/opportunities", tags=["Opportunities"])
@@ -68,3 +73,43 @@ def update_opportunity_endpoint(
     db.commit()
     db.refresh(opportunity)
     return opportunity
+
+
+@router.post(
+    "/{opportunity_id}/contacts/{contact_id}",
+    response_model=OpportunityContactResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def link_contact_endpoint(opportunity_id: int, contact_id: int, db: Session = Depends(get_db)):
+    """Link a contact to an opportunity."""
+    try:
+        link = link_contact_to_opportunity(db, opportunity_id, contact_id)
+        db.commit()
+        db.refresh(link)
+        return link
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.delete("/{opportunity_id}/contacts/{contact_id}", status_code=status.HTTP_204_NO_CONTENT)
+def unlink_contact_endpoint(opportunity_id: int, contact_id: int, db: Session = Depends(get_db)):
+    """Unlink a contact from an opportunity."""
+    unlinked = unlink_contact_from_opportunity(db, opportunity_id, contact_id)
+    if not unlinked:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link not found")
+    db.commit()
+    return None
+
+
+@router.get("/{opportunity_id}/contacts", response_model=list[ContactResponse])
+def get_opportunity_contacts_endpoint(opportunity_id: int, db: Session = Depends(get_db)):
+    """Retrieve all contacts linked to an opportunity."""
+    opportunity = get_opportunity(db, opportunity_id)
+    if not opportunity:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
+    return get_opportunity_contacts(db, opportunity_id)
+
