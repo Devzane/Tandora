@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}Organizations — Tandora{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Organizations & Companies</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">Target employers and freelance client prospect accounts.</p>
+  </div>
+  <div class="actions">
+    <a href="/organizations/new" class="btn btn-primary">+ New Organization</a>
+  </div>
+</div>
+
+<div class="panel">
+  <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center;">
+    <span style="font-size: 0.875rem; color: var(--text-muted);">Filter:</span>
+    <a href="/organizations" class="btn btn-sm {% if not current_type and current_suppressed is none %}btn-primary{% else %}btn-secondary{% endif %}">All</a>
+    <a href="/organizations?type=employer" class="btn btn-sm {% if current_type == 'employer' %}btn-primary{% else %}btn-secondary{% endif %}">Employers</a>
+    <a href="/organizations?type=freelance_prospect" class="btn btn-sm {% if current_type == 'freelance_prospect' %}btn-primary{% else %}btn-secondary{% endif %}">Freelance Prospects</a>
+    <a href="/organizations?suppressed=1" class="btn btn-sm {% if current_suppressed == 1 %}btn-primary{% else %}btn-secondary{% endif %}">Suppressed Only</a>
+  </div>
+
+  {% if companies %}
+  <table>
+    <thead>
+      <tr>
+        <th>Company Name</th>
+        <th>Type</th>
+        <th>Industry</th>
+        <th>Website</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for comp in companies %}
+      <tr>
+        <td>
+          <a href="/organizations/{{ comp.id }}" style="font-weight: 600; color: var(--primary); text-decoration: none;">
+            {{ comp.name }}
+          </a>
+        </td>
+        <td><span class="badge badge-neutral">{{ comp.type }}</span></td>
+        <td>{{ comp.industry or '-' }}</td>
+        <td>
+          {% if comp.website %}
+            <a href="{{ comp.website }}" target="_blank" rel="noreferrer" style="color: var(--text-muted); font-size: 0.85rem;">{{ comp.website }} &nearr;</a>
+          {% else %}
+            -
+          {% endif %}
+        </td>
+        <td>
+          {% if comp.suppressed %}
+            <span class="badge badge-danger">SUPPRESSED</span>
+          {% else %}
+            <span class="badge badge-success">ACTIVE</span>
+          {% endif %}
+        </td>
+        <td>
+          <div style="display: flex; gap: 0.5rem;">
+            <a href="/organizations/{{ comp.id }}" class="btn btn-secondary btn-sm">View</a>
+            <form action="/organizations/{{ comp.id }}/suppress" method="POST" style="display: inline;">
+              <input type="hidden" name="suppressed" value="{% if comp.suppressed %}0{% else %}1{% endif %}">
+              <input type="hidden" name="reason" value="Toggled from organizations list">
+              <button type="submit" class="btn btn-sm {% if comp.suppressed %}btn-secondary{% else %}btn-danger{% endif %}">
+                {% if comp.suppressed %}Unsuppress{% else %}Suppress{% endif %}
+              </button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color: var(--text-muted); font-size: 0.9rem; padding: 1rem 0;">No organizations found matching the criteria.</p>
+  {% endif %}
+</div>
+{% endblock %}
