@@ -17,6 +17,7 @@ from app.schemas.contact import (
     PhoneNumberCreate,
     PhoneNumberResponse,
 )
+from app.schemas.opportunity import OpportunityResponse
 from app.schemas.common import PaginatedResponse
 from app.services.contact_service import (
     create_contact,
@@ -29,6 +30,7 @@ from app.services.contact_service import (
     add_phone_number,
     add_contact_role,
 )
+from app.services.organization_service import get_contact_opportunities
 
 router = APIRouter(prefix="/contacts", tags=["Contacts"])
 
@@ -159,3 +161,13 @@ def add_phone_endpoint(contact_id: int, payload: PhoneNumberCreate, db: Session 
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get("/{contact_id}/opportunities", response_model=list[OpportunityResponse])
+def get_contact_opportunities_endpoint(contact_id: int, db: Session = Depends(get_db)):
+    """Retrieve all opportunities associated with a specific contact."""
+    contact = get_contact(db, contact_id)
+    if not contact:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contact not found")
+    return get_contact_opportunities(db, contact_id)
+
