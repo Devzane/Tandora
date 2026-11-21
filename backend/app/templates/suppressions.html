@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block title %}Multi-Level Suppressions — Tandora{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Multi-Level Suppressions</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">Authoritative blocklists across organizations, individuals, and email channels.</p>
+  </div>
+</div>
+
+<!-- Suppressed Organizations -->
+<div class="panel">
+  <div class="panel-header">
+    <span>Suppressed Organizations ({{ suppressed_companies|length }})</span>
+  </div>
+  {% if suppressed_companies %}
+  <table>
+    <thead>
+      <tr>
+        <th>Company</th>
+        <th>Reason</th>
+        <th>Suppressed At</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for comp in suppressed_companies %}
+      <tr>
+        <td><a href="/organizations/{{ comp.id }}" style="font-weight: 600; color: var(--primary);">{{ comp.name }}</a></td>
+        <td>{{ comp.suppressed_reason or 'No reason provided' }}</td>
+        <td style="font-size: 0.8rem; color: var(--text-muted);">{{ comp.suppressed_at.strftime('%Y-%m-%d %H:%M UTC') if comp.suppressed_at else '-' }}</td>
+        <td>
+          <form action="/organizations/{{ comp.id }}/suppress" method="POST" style="display: inline;">
+            <input type="hidden" name="suppressed" value="0">
+            <button type="submit" class="btn btn-secondary btn-sm">Unsuppress</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color: var(--text-muted); font-size: 0.9rem;">No organizations are currently suppressed.</p>
+  {% endif %}
+</div>
+
+<!-- Suppressed Contacts -->
+<div class="panel">
+  <div class="panel-header">
+    <span>Suppressed Contacts ({{ suppressed_contacts|length }})</span>
+  </div>
+  {% if suppressed_contacts %}
+  <table>
+    <thead>
+      <tr>
+        <th>Contact Name</th>
+        <th>Company</th>
+        <th>Reason</th>
+        <th>Suppressed At</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in suppressed_contacts %}
+      <tr>
+        <td><a href="/contacts/{{ c.id }}" style="font-weight: 600; color: var(--primary);">{{ c.first_name }} {{ c.last_name or '' }}</a></td>
+        <td>{{ c.company.name if c.company else 'Unassigned' }}</td>
+        <td>{{ c.suppressed_reason or 'No reason provided' }}</td>
+        <td style="font-size: 0.8rem; color: var(--text-muted);">{{ c.suppressed_at.strftime('%Y-%m-%d %H:%M UTC') if c.suppressed_at else '-' }}</td>
+        <td>
+          <form action="/contacts/{{ c.id }}/suppress" method="POST" style="display: inline;">
+            <input type="hidden" name="suppressed" value="0">
+            <button type="submit" class="btn btn-secondary btn-sm">Unsuppress</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color: var(--text-muted); font-size: 0.9rem;">No contacts are currently suppressed.</p>
+  {% endif %}
+</div>
+
+<!-- Suppressed Email Addresses -->
+<div class="panel">
+  <div class="panel-header">
+    <span>Suppressed Email Addresses ({{ suppressed_emails|length }})</span>
+  </div>
+  {% if suppressed_emails %}
+  <table>
+    <thead>
+      <tr>
+        <th>Email Address</th>
+        <th>Contact</th>
+        <th>Reason</th>
+        <th>Suppressed At</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for email in suppressed_emails %}
+      <tr>
+        <td><code>{{ email.address }}</code></td>
+        <td>
+          {% if email.contact %}
+            <a href="/contacts/{{ email.contact.id }}">{{ email.contact.first_name }} {{ email.contact.last_name or '' }}</a>
+          {% else %}
+            -
+          {% endif %}
+        </td>
+        <td>{{ email.suppressed_reason or 'No reason provided' }}</td>
+        <td style="font-size: 0.8rem; color: var(--text-muted);">{{ email.suppressed_at.strftime('%Y-%m-%d %H:%M UTC') if email.suppressed_at else '-' }}</td>
+        <td>
+          <form action="/contacts/{{ email.contact_id }}/emails/{{ email.id }}/suppress" method="POST" style="display: inline;">
+            <input type="hidden" name="suppressed" value="0">
+            <button type="submit" class="btn btn-secondary btn-sm">Unsuppress</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color: var(--text-muted); font-size: 0.9rem;">No email addresses are currently suppressed.</p>
+  {% endif %}
+</div>
+{% endblock %}
