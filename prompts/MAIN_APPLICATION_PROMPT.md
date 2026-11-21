@@ -87,7 +87,7 @@ Implement strictly the scoped stage. Follow these core architectural standards:
 ### 4. Chrome Extension Capture Scope
 - Supported page types: LinkedIn individual profiles, LinkedIn posts, LinkedIn company pages, job listings, and prospect websites.
 - **Post Author Separation**: Preserves post author as a potential decision-maker distinct from personal profile owners.
-- **ContactOut & Apollo Integration**: Extracts visible overlay data in active tab DOM when accessible; provides an intuitive manual paste-and-parse fallback form when panels are isolated.
+- **ContactOut & Apollo Integration (Conditional)**: Extraction from visible overlays is strictly best-effort and conditional; closed shadow roots, isolated extension contexts, and sandboxed frames can prevent DOM access. The manual paste-and-parse fallback form is therefore an essential, mandatory requirement.
 - **Least-Privilege Security**: Permissions restricted to `activeTab`, `scripting`, `storage`, and host permission `http://127.0.0.1:8000/*` only. No `<all_urls>`.
 - **Review Before Submit**: All extracted data displayed in editable popup form before submission.
 
@@ -101,10 +101,9 @@ Implement strictly the scoped stage. Follow these core architectural standards:
 - Outbound delivery follows the persistent state machine: `pending` $\rightarrow$ `sending` $\rightarrow$ `sent` / `failed` / `unknown`.
 - Persist `send_attempts` record and commit database transaction *before* opening SMTP socket.
 - Never auto-resend an `unknown` attempt; require manual user reconciliation.
-- Enforce unique idempotency keys per thread action.
-- Serialize delivery operations using an in-process concurrency lock.
+- Enforce unique idempotency keys per thread action via a database-level `UNIQUE` constraint on `send_attempts.idempotency_key`.
+- Authoritative Concurrency Coordination: Quota enforcement (max 20 messages/day globally), duplicate send prevention, and concurrent follow-up execution are authoritatively governed by SQLite `BEGIN IMMEDIATE` transactions and database constraints across processes and restarts; in-memory locks serve strictly as an auxiliary process-level optimization.
 - Default to `DRY_RUN = true` until live sending is explicitly configured.
-- Global daily limit: maximum 20 messages per day globally (initial + follow-ups combined).
 
 ### 7. 10 Mandatory Pre-Send Checks
 Before every outbound email dispatch, verify all 10 checks against persistent database records:
