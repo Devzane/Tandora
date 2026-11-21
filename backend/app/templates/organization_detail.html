@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}{{ company.name }} — Tandora{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ company.name }}</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">
+      UUID: <code>{{ company.external_id }}</code> &bull; Created {{ company.created_at.strftime('%Y-%m-%d') }}
+    </p>
+  </div>
+  <div class="actions">
+    <a href="/organizations" class="btn btn-secondary">&larr; Back</a>
+    <form action="/organizations/{{ company.id }}/suppress" method="POST" style="display: inline;">
+      <input type="hidden" name="suppressed" value="{% if company.suppressed %}0{% else %}1{% endif %}">
+      <input type="hidden" name="reason" value="Toggled from organization detail">
+      <button type="submit" class="btn {% if company.suppressed %}btn-secondary{% else %}btn-danger{% endif %}">
+        {% if company.suppressed %}Unsuppress Organization{% else %}Suppress Organization{% endif %}
+      </button>
+    </form>
+  </div>
+</div>
+
+{% if company.suppressed %}
+<div class="alert alert-danger">
+  <strong>Organization Suppressed:</strong> All outreach to contacts employed at this company is blocked. Pending follow-ups are cancelled.
+  {% if company.suppressed_reason %}<div style="margin-top: 0.25rem;">Reason: {{ company.suppressed_reason }} (at {{ company.suppressed_at.strftime('%Y-%m-%d %H:%M UTC') }})</div>{% endif %}
+</div>
+{% endif %}
+
+<div class="panel">
+  <div class="panel-header">Company Details</div>
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+    <div>
+      <div style="font-size: 0.8rem; color: var(--text-muted);">Type</div>
+      <div style="font-weight: 600;"><span class="badge badge-neutral">{{ company.type }}</span></div>
+    </div>
+    <div>
+      <div style="font-size: 0.8rem; color: var(--text-muted);">Industry</div>
+      <div style="font-weight: 600;">{{ company.industry or 'Not specified' }}</div>
+    </div>
+    <div>
+      <div style="font-size: 0.8rem; color: var(--text-muted);">Website</div>
+      <div>{% if company.website %}<a href="{{ company.website }}" target="_blank" rel="noreferrer">{{ company.website }} &nearr;</a>{% else %}None{% endif %}</div>
+    </div>
+    <div>
+      <div style="font-size: 0.8rem; color: var(--text-muted);">Source URL</div>
+      <div>{% if company.source_url %}<a href="{{ company.source_url }}" target="_blank" rel="noreferrer">{{ company.source_url }} &nearr;</a>{% else %}None{% endif %}</div>
+    </div>
+  </div>
+  {% if company.description %}
+  <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+    <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">Description / Notes</div>
+    <p style="font-size: 0.9rem;">{{ company.description }}</p>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Associated Opportunities -->
+<div class="panel">
+  <div class="panel-header">
+    <span>Opportunities ({{ opportunities|length }})</span>
+    <a href="/opportunities/new?company_id={{ company.id }}" class="btn btn-secondary btn-sm">+ Add Opportunity</a>
+  </div>
+  {% if opportunities %}
+  <table>
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Type</th>
+        <th>Status</th>
+        <th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for opp in opportunities %}
+      <tr>
+        <td><a href="/opportunities/{{ opp.id }}" style="font-weight: 600; color: var(--primary);">{{ opp.title }}</a></td>
+        <td><span class="badge badge-neutral">{{ opp.type }}</span></td>
+        <td><span class="badge badge-info">{{ opp.status }}</span></td>
+        <td style="font-size: 0.8rem; color: var(--text-muted);">{{ opp.created_at.strftime('%Y-%m-%d') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color: var(--text-muted); font-size: 0.9rem;">No opportunities registered for this company.</p>
+  {% endif %}
+</div>
+
+<!-- Associated Contacts -->
+<div class="panel">
+  <div class="panel-header">
+    <span>Contacts ({{ contacts|length }})</span>
+    <a href="/contacts/new?company_id={{ company.id }}" class="btn btn-primary btn-sm">+ Add Contact</a>
+  </div>
+  {% if contacts %}
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Roles</th>
+        <th>Status</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in contacts %}
+      <tr>
+        <td>
+          <a href="/contacts/{{ c.id }}" style="font-weight: 600; color: var(--primary);">
+            {{ c.first_name }} {{ c.last_name or '' }}
+          </a>
+          {% if c.duplicate_flag %}
+            <span class="badge badge-warning" style="margin-left: 0.4rem;">FLAGGED DUP</span>
+          {% endif %}
+        </td>
+        <td>
+          {% for r in c.roles %}
+            <span class="badge badge-neutral">{{ r.role }}</span>
+          {% endfor %}
+        </td>
+        <td>
+          {% if c.suppressed %}
+            <span class="badge badge-danger">SUPPRESSED</span>
+          {% else %}
+            <span class="badge badge-success">ACTIVE</span>
+          {% endif %}
+        </td>
+        <td><a href="/contacts/{{ c.id }}" class="btn btn-secondary btn-sm">View</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color: var(--text-muted); font-size: 0.9rem;">No contacts associated with this company.</p>
+  {% endif %}
+</div>
+{% endblock %}
