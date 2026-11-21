@@ -91,8 +91,11 @@ $$\text{Pre-Send Checks} \rightarrow \text{Persist 'pending'} \rightarrow \text{
 
 ```python
 import asyncio
+from sqlalchemy import text
 
-# Global delivery lock serializing all send operations
+# In-memory delivery lock (auxiliary single-process concurrency safeguard).
+# SQLite-backed transactions (BEGIN IMMEDIATE) and database constraints (UNIQUE)
+# are the authoritative safeguards across multiple processes and restarts.
 delivery_lock = asyncio.Lock()
 
 async def execute_secure_send(
@@ -102,6 +105,7 @@ async def execute_secure_send(
     approval_id: int
 ) -> SendAttempt:
     async with delivery_lock:
+        db.execute(text("BEGIN IMMEDIATE"))
         thread = db.get(OutreachThread, thread_id)
         draft = db.get(Draft, draft_id)
         approval = db.get(Approval, approval_id)
@@ -249,5 +253,6 @@ def pre_send_checks(db: Session, thread_id: int, draft_id: int, approval_id: int
 - Test approval hash mismatch raises error and blocks send.
 - Test that send-attempt record is committed before SMTP transmission.
 - Test that unknown send attempts are flagged and never auto-retried.
-- Test that delivery lock prevents concurrent duplicate sends.
+- Test that SQLite transactional coordination and unique database constraints prevent duplicate send attempts and quota overruns across processes.
+- Test that delivery lock prevents concurrent thread collisions in a single process.
 - Test that dry-run mode simulates delivery without opening SMTP sockets.
