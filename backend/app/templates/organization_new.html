@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}New Organization — Tandora{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Create New Organization</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">Add a target employer or freelance client prospect.</p>
+  </div>
+  <div class="actions">
+    <a href="/organizations" class="btn btn-secondary">&larr; Back to Organizations</a>
+  </div>
+</div>
+
+<div class="panel" style="max-width: 650px;">
+  <form action="/organizations/new" method="POST">
+    <div class="form-group">
+      <label for="name">Organization Name *</label>
+      <input type="text" id="name" name="name" class="form-control" required placeholder="e.g. Acme Cloud Systems">
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="type">Organization Type *</label>
+        <select id="type" name="type" class="form-control">
+          <option value="employer">Employer</option>
+          <option value="freelance_prospect">Freelance Prospect</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="industry">Industry</label>
+        <input type="text" id="industry" name="industry" class="form-control" placeholder="e.g. Fintech, DevOps, AI">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="website">Website URL</label>
+      <input type="url" id="website" name="website" class="form-control" placeholder="https://example.com">
+    </div>
+
+    <div class="form-group">
+      <label for="source_url">Source URL</label>
+      <input type="url" id="source_url" name="source_url" class="form-control" placeholder="https://linkedin.com/company/...">
+      <div class="help-text">Where this company was discovered.</div>
+    </div>
+
+    <div class="form-group">
+      <label for="description">Notes / Description</label>
+      <textarea id="description" name="description" class="form-control" rows="3" placeholder="Overview, tech stack notes, headcount..."></textarea>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Save Organization</button>
+  </form>
+</div>
+{% endblock %}
