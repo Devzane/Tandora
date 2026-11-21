@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}New Contact — Tandora{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Create New Contact</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">Manually add a prospect with provenance details.</p>
+  </div>
+  <div class="actions">
+    <a href="/contacts" class="btn btn-secondary">&larr; Back to Contacts</a>
+  </div>
+</div>
+
+<div class="panel" style="max-width: 650px;">
+  <form action="/contacts/new" method="POST">
+    <div class="form-row">
+      <div class="form-group">
+        <label for="first_name">First Name *</label>
+        <input type="text" id="first_name" name="first_name" class="form-control" required placeholder="e.g. Jane">
+      </div>
+      <div class="form-group">
+        <label for="last_name">Last Name</label>
+        <input type="text" id="last_name" name="last_name" class="form-control" placeholder="e.g. Smith">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="company_id">Associated Organization</label>
+      <select id="company_id" name="company_id" class="form-control">
+        <option value="">-- No Organization (Unassigned) --</option>
+        {% for comp in companies %}
+          <option value="{{ comp.id }}" {% if selected_company_id == comp.id %}selected{% endif %}>{{ comp.name }} ({{ comp.type }})</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="headline">Headline / Professional Title</label>
+      <input type="text" id="headline" name="headline" class="form-control" placeholder="e.g. VP of Engineering at Acme Inc">
+    </div>
+
+    <div class="form-group">
+      <label for="linkedin_url">LinkedIn Profile URL</label>
+      <input type="url" id="linkedin_url" name="linkedin_url" class="form-control" placeholder="https://www.linkedin.com/in/jane-smith">
+      <div class="help-text">Automatically normalized and checked for deduplication.</div>
+    </div>
+
+    <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 1.5rem 0;">
+    <h3 style="font-size: 1rem; margin-bottom: 1rem;">Primary Email with Provenance</h3>
+
+    <div class="form-row">
+      <div class="form-group" style="flex: 2;">
+        <label for="email_address">Email Address</label>
+        <input type="email" id="email_address" name="email_address" class="form-control" placeholder="jane.smith@acme.com">
+      </div>
+      <div class="form-group" style="flex: 1;">
+        <label for="email_source">Source</label>
+        <select id="email_source" name="email_source" class="form-control">
+          <option value="manual">Manual Entry</option>
+          <option value="ContactOut">ContactOut</option>
+          <option value="Apollo">Apollo</option>
+          <option value="LinkedIn">LinkedIn</option>
+          <option value="website">Company Website</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group" style="flex: 2;">
+        <label for="phone_number">Phone Number (Optional)</label>
+        <input type="tel" id="phone_number" name="phone_number" class="form-control" placeholder="+1 (555) 019-2834">
+      </div>
+      <div class="form-group" style="flex: 1;">
+        <label for="phone_source">Phone Source</label>
+        <select id="phone_source" name="phone_source" class="form-control">
+          <option value="manual">Manual Entry</option>
+          <option value="ContactOut">ContactOut</option>
+          <option value="Apollo">Apollo</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="notes">Notes</label>
+      <textarea id="notes" name="notes" class="form-control" rows="3" placeholder="Context notes, personal insights..."></textarea>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Save Contact</button>
+  </form>
+</div>
+{% endblock %}
