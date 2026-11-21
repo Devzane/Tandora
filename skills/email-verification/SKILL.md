@@ -61,29 +61,34 @@ class ReoonAPIError(Exception):
 
 ### Result Classification
 
-Map Reoon API response to the internal status values:
+Map Reoon API response to the canonical internal status values defined in `DATABASE_SCHEMA.md`:
 
 | Reoon Status | Internal Status | Outreach Allowed |
 |-------------|-----------------|------------------|
-| `safe` | `safe` | Yes |
+| `safe` / `valid` | `safe` | Yes |
 | `catch_all` | `catch-all` | Only with explicit approval |
 | `invalid` | `invalid` | Never |
 | `unknown` | `unknown` | Never |
 | `risky` | `unknown` | Never |
 | `spamtrap` | `invalid` | Never |
+| `role_account` | `role_account` | Never (role address, e.g. info@, sales@) |
+| `disposable` | `disposable` | Never (temporary inbox) |
 
 ```python
 REOON_STATUS_MAP = {
     "safe": "safe",
+    "valid": "safe",
     "catch_all": "catch-all",
     "invalid": "invalid",
     "unknown": "unknown",
     "risky": "unknown",
     "spamtrap": "invalid",
+    "role_account": "role_account",
+    "disposable": "disposable",
 }
 
 def map_reoon_status(reoon_status: str) -> str:
-    return REOON_STATUS_MAP.get(reoon_status, "unknown")
+    return REOON_STATUS_MAP.get(reoon_status.lower(), "unknown")
 ```
 
 ### Verification Caching
