@@ -121,13 +121,53 @@ def test_generate_draft(test_db):
 ```
 
 ```python
-# Mocking Zoho SMTP
-def test_send_email(test_db):
+# Mocking Zoho SMTP and Send Attempts Lifecycle
+def test_send_attempt_lifecycle(test_db):
     with patch("app.integrations.zoho_smtp.smtplib.SMTP") as mock_smtp:
         mock_instance = mock_smtp.return_value.__enter__.return_value
         mock_instance.sendmail = MagicMock()
-        message_id = send_approved_email(test_db, thread_id=1, draft_id=1, approval_id=1)
-        assert message_id is not None
+        
+        # Verify attempt is committed as 'pending'/'sending' before SMTP completes
+        result = send_approved_email(test_db, thread_id=1, draft_id=1, approval_id=1, dry_run=False)
+        assert result["status"] == "sent"
+        
+        attempt = test_db.query(SendAttempt).filter_by(thread_id=1).one()
+        assert attempt.status == "sent"
+        assert attempt.provider_message_id is not None
+
+def test_dry_run_mode(test_db):
+    with patch("app.integrations.zoho_smtp.smtplib.SMTP") as mock_smtp:
+        # Dry run must never contact SMTP socket
+        result = send_approved_email(test_db, thread_id=1, draft_id=1, approval_id=1, dry_run=True)
+        assert result["status"] == "sent"
+        mock_smtp.assert_not_called()
+        
+        attempt = test_db.query(SendAttempt).filter_by(thread_id=1).one()
+        assert attempt.status == "sent"
+        assert "DRY_RUN_" in attempt.provider_message_id
+
+def test_approval_hash_tamper_detection(test_db):
+    # Setup valid approval with computed SHA-256 hash
+    draft = test_db.query(Draft).get(1)
+    recipient = "jane@example.com"
+    valid_hash = compute_approval_hash(recipient, draft.subject, draft.body, draft.id, draft.version)
+    approval = Approval(draft_id=draft.id, draft_version=draft.version, approved_content_hash=valid_hash, is_active=1)
+    test_db.add(approval)
+    test_db.commit()
+
+    # Tampering with draft body invalidates approval hash
+    draft.body = "Tampered body content not reviewed by user"
+    test_db.commit()
+
+    with pytest.raises(SecurityViolationError, match="Approval content hash mismatch"):
+        verify_pre_send_safety(test_db, thread_id=1, draft_id=draft.id, recipient_email=recipient)
+
+def test_local_ui_rendering(client):
+    # Test server-rendered Jinja2 UI view (Stage 1)
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "Daily Sending Quota" in response.text
 ```
 
 ### Integration Workflow Test
@@ -151,7 +191,7 @@ def test_full_outreach_workflow(client, test_db, mock_reoon_safe, mock_gemini, m
                          json={"address": "alice@acme.com", "is_primary": True})
     email_id = em_res.json()["id"]
 
-    # 4. Verify email
+    # 4. Verify email (safe result cached)
     client.post(f"/api/v1/emails/{email_id}/verify")
 
     # 5. Create thread and generate draft
@@ -162,12 +202,13 @@ def test_full_outreach_workflow(client, test_db, mock_reoon_safe, mock_gemini, m
     dr_res = client.post(f"/api/v1/outreach-threads/{thread_id}/drafts/generate")
     draft_id = dr_res.json()["id"]
 
-    # 6. Approve draft
+    # 6. Approve draft (calculates SHA-256 hash)
     app_res = client.post(f"/api/v1/drafts/{draft_id}/approve")
     approval_id = app_res.json()["id"]
+    assert app_res.json()["approved_content_hash"] is not None
 
-    # 7. Send approved email
-    send_res = client.post(f"/api/v1/outreach-threads/{thread_id}/send")
+    # 7. Send approved email (creates pending send_attempt, verifies hash, executes send)
+    send_res = client.post(f"/api/v1/outreach-threads/{thread_id}/send", json={"dry_run": False})
     assert send_res.status_code == 200
     assert "message_id" in send_res.json()
 ```
@@ -175,8 +216,18 @@ def test_full_outreach_workflow(client, test_db, mock_reoon_safe, mock_gemini, m
 ## Coverage Requirements
 
 - Minimum 80% test coverage across services and integrations.
-- 100% test coverage for the pre-send safety checklist in `sending_service.py`.
-- 100% test coverage for the approval requirement logic.
+- 100% test coverage for the 10-point pre-send safety checklist in `sending_service.py`:
+  1. Valid active approval exists for exact draft version.
+  2. SHA-256 content hash matches exactly.
+  3. Global pause flag is False.
+  4. Global daily sending limit (20) not exceeded.
+  5. Contact is not suppressed.
+  6. Email address is not suppressed.
+  7. Company is not suppressed.
+  8. Email verification status is valid (`safe` or approved `catch-all`).
+  9. Catch-all has explicit `catch_all_approved=1`.
+  10. Delivery serialization mutex acquired.
+- 100% test coverage for persistent `send_attempts` transitions (`pending` -> `sending` -> `sent` / `failed` / `unknown`).
 - 100% test coverage for catch-all address approval gating.
 
 ## Common Mistakes
