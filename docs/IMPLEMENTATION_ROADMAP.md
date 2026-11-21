@@ -2,31 +2,29 @@
 
 ## Guiding Principles
 
-1. **Usability first**: Each milestone must produce a working, testable increment of the application. The system becomes useful as early as possible.
-2. **No unapproved sends**: The approval gate must be in place before any email sending capability is built.
-3. **Incremental integration**: External services are integrated one at a time and tested in isolation.
-4. **Schema stability**: The database schema is defined once (Milestone 1) and evolved through Alembic migrations only.
-5. **Stop and review**: Each milestone ends with a review checkpoint. No milestone is started until the previous one passes its acceptance criteria.
+1. **Usable application early**: Deliver a functional, local management application in Stage 1 so prospects can be created, viewed, edited, and organized immediately.
+2. **Approval integrity**: Enforce SHA-256 content hashing before any sending capability is built.
+3. **Delivery safety**: Build persistent send-attempt lifecycles with dry-run mode enabled by default before connecting live SMTP.
+4. **Resilient scheduling**: Base scheduling entirely on persistent SQLite records with automatic startup recovery.
+5. **Strict stage gating**: Complete and test each stage before moving to the next.
 
 ---
 
-## Milestone 0: Project Initialization
+## Stage 0: Project Foundation
 
 ### Objective
-Establish the project structure, development environment, and tooling. No application logic yet.
+Establish the repository structure, Python 3.12 virtual environment, dependency management, SQLite connection with foreign key enforcement, Alembic migration framework, FastAPI application instance, and automated test scaffolding.
 
 ### Dependencies
 None.
 
 ### Features
-- Python 3.12 virtual environment.
-- Project directory structure.
-- `pyproject.toml` with all dependencies listed.
-- FastAPI installed and running (returns `{"status": "ok"}` on `GET /health`).
-- Alembic configured and connected to SQLite.
-- `.env.example` file with all required variable names.
-- `.gitignore` configured.
-- `pytest` configured and running (zero tests, but test infrastructure works).
+- Modern `pyproject.toml` configuration with FastAPI, Uvicorn, SQLAlchemy 2.x, Alembic, Pydantic-settings, and Pytest.
+- Database session manager with `PRAGMA foreign_keys = ON` and WAL mode enabled.
+- Centralized configuration loaded via `pydantic-settings` from gitignored `.env`.
+- `.env.example` file documenting all variable names.
+- FastAPI app instance binding to `127.0.0.1:8000`.
+- Health endpoint (`GET /health`) returning status and timestamp.
 
 ### Expected Files / Modules
 ```
@@ -34,555 +32,459 @@ tandora/
 ├── backend/
 │   ├── app/
 │   │   ├── __init__.py
-│   │   ├── main.py          # FastAPI app instance
-│   │   ├── config.py        # Settings loaded from env
-│   │   └── database.py      # SQLAlchemy engine + session
+│   │   ├── main.py             # FastAPI instance, lifespan handler, router mounting
+│   │   ├── config.py           # Settings class with on-demand validation
+│   │   └── database.py         # Engine, SessionLocal, PRAGMA listener, Base
 │   ├── alembic/
-│   │   ├── env.py
-│   │   └── versions/        # Empty initially
+│   │   ├── env.py              # Alembic environment configured with Base.metadata
+│   │   └── script.py.mako
 │   ├── tests/
-│   │   └── test_health.py
+│   │   ├── __init__.py
+│   │   ├── conftest.py         # Test engine, in-memory DB fixture, test client
+│   │   └── test_health.py      # Health endpoint test
 │   ├── alembic.ini
 │   ├── pyproject.toml
 │   └── .env.example
-├── extension/               # Empty directory
-└── docs/                    # Documentation (already complete)
+├── .gitignore
+├── docs/                       # Complete project documentation
+└── skills/                     # Reusable project skills
 ```
 
 ### Tests
-- `GET /health` returns HTTP 200.
-- Database file is created on startup.
-- Unconfigured integrations produce clear, actionable errors upon invocation without preventing application startup.
+- `test_health_returns_200`: `GET /health` returns HTTP 200 with `{"status": "ok"}`.
+- `test_foreign_keys_enforced`: Verify SQLite raises `IntegrityError` on orphan foreign key insert.
+- `test_unconfigured_integrations_do_not_crash_startup`: Application boots cleanly without live API keys.
 
 ### Acceptance Criteria
-- Server starts with `uvicorn app.main:app`.
-- Health endpoint responds.
-- Alembic can run `alembic upgrade head` without error.
-- All env vars are documented in `.env.example`.
+- `pytest backend/tests/` passes.
+- `uvicorn app.main:app --host 127.0.0.1 --port 8000` starts cleanly.
+- Alembic runs `alembic upgrade head` without errors.
 
 ### Definition of Done
-- Server starts.
-- Health endpoint passes.
-- Empty migration history created.
-- README with setup instructions exists.
+Foundation is running, test suite passes, and the local server responds on `127.0.0.1:8000`.
 
 ---
 
-## Milestone 1: Core Database Schema
+## Stage 1: Core Data Management & Local Interface
 
 ### Objective
-Implement the complete database schema via Alembic. No API endpoints yet.
+Implement the 21-table database schema, deterministic contact deduplication, CRUD services, and a functional server-rendered local web management interface (Jinja2 + HTML/CSS).
 
 ### Dependencies
-Milestone 0 complete.
+Stage 0 complete.
 
 ### Features
-- All SQLAlchemy model definitions (see DATABASE_SCHEMA.md).
-- Initial Alembic migration creating all tables.
-- All constraints, indexes, and foreign keys defined.
-
-### Expected Files / Modules
-```
-backend/
-└── app/
-    └── models/
-        ├── __init__.py
-        ├── company.py
-        ├── opportunity.py
-        ├── contact.py
-        ├── contact_role.py
-        ├── email_address.py
-        ├── email_verification.py
-        ├── opportunity_contact.py
-        ├── outreach_thread.py
-        ├── draft.py
-        ├── approval.py
-        ├── outreach_event.py
-        ├── followup_schedule.py
-        ├── reply.py
-        ├── bounce.py
-        ├── sheets_sync_state.py
-        ├── audit_log.py
-        └── app_config.py
-```
-
-### Tests
-- Alembic migration runs without errors.
-- All tables exist in the database after migration.
-- Foreign key constraints are enforced (SQLite must have `PRAGMA foreign_keys = ON`).
-- Unique constraints are enforced (attempt to insert duplicate; expect IntegrityError).
-
-### Acceptance Criteria
-- `alembic upgrade head` creates all tables.
-- All foreign key relationships are correct.
-- Unique constraints are tested.
-
-### Definition of Done
-- Schema matches DATABASE_SCHEMA.md exactly.
-- All model tests pass.
-
----
-
-## Milestone 2: Company, Opportunity, and Contact API
-
-### Objective
-Implement the core CRUD API for companies, opportunities, and contacts. This enables data capture.
-
-### Dependencies
-Milestone 1 complete.
-
-### Features
-- API endpoints for companies (create, read, list, update).
-- API endpoints for opportunities (create, read, list, update, link to company).
-- API endpoints for contacts (create, read, list, update, deduplication logic).
-- API endpoints for contact roles (add, list).
-- API endpoints for email addresses (add, list, deduplication check).
-- Pydantic request/response schemas for all endpoints.
-- Contact deduplication logic.
-- Email address uniqueness enforcement.
+- Complete SQLAlchemy model definitions for all entities (organizations, opportunities, contacts, contact roles, email addresses, phone numbers, captures, posts, threads, drafts, approvals, send attempts, events, schedules, replies, bounces, sync state, audit log, config).
+- Initial Alembic migration creating all tables, indexes, and constraints.
+- Contact deduplication service: primary match on normalized LinkedIn URL, secondary on normalized email, cautious flagging for name+company matches (`duplicate_flag = 1`).
+- Contact data provenance tracking: individual sources, source URLs, and timestamps for emails and phones.
+- Server-rendered local web management interface at `http://127.0.0.1:8000`:
+  - **Dashboard**: High-level counts, daily quota usage, pause toggle.
+  - **Organizations**: View, create, edit companies and organization-level suppression.
+  - **Opportunities**: View and edit job listings / freelance leads.
+  - **Contacts**: Contact profiles, title, location, notes, and duplicate flag review.
+  - **Emails & Phones**: View channel lists with provenance tags (`ContactOut`, `Apollo`, etc.).
+  - **Suppression Management**: Person, address, and organization suppression controls.
 
 ### Expected Files / Modules
 ```
 backend/app/
-├── api/
-│   ├── __init__.py
-│   ├── v1/
-│   │   ├── __init__.py
-│   │   ├── companies.py
-│   │   ├── opportunities.py
-│   │   └── contacts.py
-├── schemas/
-│   ├── __init__.py
-│   ├── company.py
-│   ├── opportunity.py
-│   └── contact.py
-└── services/
-    ├── __init__.py
-    ├── company_service.py
-    ├── opportunity_service.py
-    └── contact_service.py
+├── models/                     # 21 SQLAlchemy models
+│   ├── company.py, opportunity.py, contact.py, contact_role.py
+│   ├── email_address.py, phone_number.py, email_verification.py
+│   ├── capture.py, linkedin_post.py, opportunity_contact.py
+│   ├── outreach_thread.py, draft.py, approval.py, send_attempt.py
+│   ├── outreach_event.py, followup_schedule.py, reply.py, bounce.py
+│   ├── sheets_sync_state.py, audit_log.py, app_config.py
+├── schemas/                    # Pydantic schemas for all entities
+├── services/
+│   ├── organization_service.py, contact_service.py
+│   ├── deduplication_service.py, audit_service.py
+├── api/v1/                     # REST API endpoints
+└── ui/                         # Server-rendered web interface
+    ├── routers/                # UI route handlers (dashboard, contacts, etc.)
+    ├── templates/              # Jinja2 HTML templates
+    └── static/                 # CSS and lightweight vanilla JS
 ```
 
 ### Tests
-- Create a company, retrieve it, list all companies.
-- Create an opportunity under a company.
-- Create a contact with deduplication: second identical contact returns existing.
-- Add multiple roles to a contact; duplicate role rejected.
-- Add multiple email addresses; duplicate address returns conflict error.
-- All endpoints return correct HTTP status codes.
+- Migration applies cleanly to SQLite.
+- Contact deduplication tests: normalized LinkedIn URL matches resolve to same contact; duplicate name without LinkedIn URL flags for review.
+- Provenance tests: emails and phone numbers store individual source metadata.
+- UI tests: dashboard, organizations, contacts, and suppression views render HTTP 200 with expected HTML content.
 
 ### Acceptance Criteria
-- Full CRUD available for companies, opportunities, contacts.
-- Deduplication works as specified.
-- All Pydantic schemas validate correctly.
+- User can browse to `http://127.0.0.1:8000` and manually create, view, edit, and organize prospects, companies, opportunities, emails, and phone numbers.
+- No duplicate contacts created when same normalized LinkedIn URL is captured.
 
 ### Definition of Done
-- All Milestone 2 tests pass.
-- No hardcoded data in any endpoint.
+Working local application running in browser; all Stage 1 tests pass.
 
 ---
 
-## Milestone 3: Chrome Extension — Data Capture
+## Stage 2: Chrome Extension (Manifest V3)
 
 ### Objective
-Build the Chrome Extension so the user can capture companies and opportunities from browser pages.
+Build and integrate the Manifest V3 Chrome Extension to capture prospects from LinkedIn profiles, LinkedIn posts, company pages, job listings, and visible ContactOut/Apollo overlays with review popup and manual fallback.
 
 ### Dependencies
-Milestone 2 complete (the extension needs the API to exist).
+Stage 1 complete (capture API endpoint available).
 
 ### Features
-- Manifest V3 extension structure.
-- Background service worker.
-- Popup UI: displays captured URL, title, editable fields.
-- Content script to extract page metadata.
-- Keyboard shortcut to open the popup.
-- POST to `/api/v1/captures` with extension secret header.
-- Backend `/api/v1/captures` endpoint that processes captured data.
-- Backend validates the extension secret.
+- Manifest V3 extension configuration with `activeTab`, `scripting`, and `storage` permissions. Host permissions restricted to `http://127.0.0.1:8000/*`.
+- Background service worker managing extension lifecycle.
+- Content script extracting visible DOM elements from:
+  - LinkedIn personal profiles (name, headline, company, title, location, profile URL).
+  - LinkedIn posts (post author, headline, post text, URL, timestamp, mentioned company; author kept distinct from profile owner).
+  - Visible ContactOut and Apollo.io panels when open in the active DOM.
+- Manual fallback form in popup: allows pasting text from isolated overlays with heuristic extraction of name, emails, and phones.
+- Interactive popup UI: review, edit, select opportunity type, add notes, and submit.
+- Keyboard shortcut (`Alt+Shift+T`) to trigger capture.
+- Authenticated endpoint `POST /api/v1/captures` validating `X-Extension-Secret`, persisting raw capture in `captures`, and triggering deduplication.
 
 ### Expected Files / Modules
 ```
 extension/
 ├── manifest.json
-├── background.js
+├── background.js               # Service worker
+├── content.js                  # DOM extractor for profiles, posts, overlays
 ├── popup/
-│   ├── popup.html
-│   ├── popup.js
-│   └── popup.css
-├── content.js
+│   ├── popup.html              # Review & edit popup interface
+│   ├── popup.js                # Form logic, storage, API submission
+│   └── popup.css               # Clean styling
+├── parser.js                   # Heuristic text parser for manual paste fallback
 └── icons/
-    └── icon.png
-backend/app/api/v1/
-└── captures.py
+backend/app/api/v1/captures.py  # Authenticated capture endpoint
 ```
 
 ### Tests
-- Extension loads in Chrome without manifest errors.
-- Popup opens and displays current page URL and title.
-- POST to `/api/v1/captures` with valid secret creates a Company and Opportunity.
-- POST with invalid/missing secret returns HTTP 401.
-- Duplicate company name reuses existing company record.
+- Extension loads in Chrome without Manifest V3 warnings.
+- `POST /api/v1/captures` with valid `X-Extension-Secret` processes profile capture and creates linked records.
+- Missing or invalid secret returns HTTP 401.
+- LinkedIn post capture links post author as decision-maker without overwriting opportunity context.
 
 ### Acceptance Criteria
-- Extension installed as unpacked in Chrome.
-- Keyboard shortcut opens the popup.
-- Submission creates records in the database.
-- Secret validation works.
+- User can press `Alt+Shift+T` on a LinkedIn profile or post, review extracted data in popup, and save it directly into the local database.
+- ContactOut and Apollo visible data (or pasted text) saves with correct provenance tags.
 
 ### Definition of Done
-- Capture workflow works end-to-end from browser to database.
+End-to-end capture verified in Chrome browser; all tests pass.
 
 ---
 
-## Milestone 4: Email Verification
+## Stage 3: Email Verification (Reoon)
 
 ### Objective
-Integrate Reoon to verify contact email addresses before outreach.
+Integrate Reoon Email Verifier API to validate deliverability, enforce 30-day result caching, gate catch-all addresses behind mandatory manual approval, and track credit consumption.
 
 ### Dependencies
-Milestone 2 complete.
+Stage 1 complete.
 
 ### Features
-- `POST /api/v1/emails/{email_address_id}/verify` endpoint.
-- Reoon API client module.
-- Verification result storage in `email_verifications`.
-- Result caching (avoid re-verifying recently verified addresses).
-- `catch-all` approval endpoint: `POST /api/v1/emails/{email_address_id}/approve-catchall`.
-- Credit tracking.
-- Audit log entries for all verification events.
+- Reoon API client module with timeout handling and error mapping.
+- 30-day caching: check `email_verifications` before calling Reoon.
+- Verification classification: `safe`, `catch-all`, `invalid`, `unknown`, `role_account`, `disposable`.
+- Catch-all review gate: `catch-all` addresses held in review queue; require explicit manual approval (`catch_all_approved = 1`) via `POST /api/v1/emails/{id}/approve-catchall`.
+- Permanent block on `invalid`, `unknown`, and `disposable` addresses.
+- Local UI verification badge and catch-all approval toggle.
+- Credit tracking: log credits consumed per verification.
 
 ### Expected Files / Modules
 ```
 backend/app/
-├── integrations/
-│   ├── __init__.py
-│   └── reoon.py
-├── api/v1/
-│   └── email_verification.py
-└── services/
-    └── verification_service.py
+├── integrations/reoon.py       # Reoon API client
+├── services/verification_service.py
+└── api/v1/email_verification.py
 ```
 
 ### Tests
-- Mocked Reoon API: verify a `safe` address → stored correctly.
-- Mocked Reoon API: verify a `catch-all` address → flagged, not usable until approved.
-- Mocked Reoon API: verify an `invalid` address → stored, blocked from outreach.
-- Approve a catch-all address → `catch_all_approved = 1`.
-- Cache hit: second verification of same address does not call Reoon again.
-- Credits updated after each call.
-- Audit log entries created for each event.
+- Verify `safe` address with mocked Reoon $\rightarrow$ eligible for drafting.
+- Verify `catch-all` address $\rightarrow$ held in review queue until approved.
+- Verify `invalid` address $\rightarrow$ blocked from outreach.
+- Cache test: second verification of same address within 30 days does not call external API.
+- Reoon outage test: returns actionable error, does not mark address as verified.
 
 ### Acceptance Criteria
-- All verification statuses handled correctly.
-- Catch-all gate works.
-- Credits tracked.
+- Deliverability accurately classified.
+- Catch-all gate enforced: no catch-all address can be used without explicit user action.
 
 ### Definition of Done
-- All Milestone 4 tests pass using mocked Reoon.
-- Ready for live Reoon key once available.
+Verification service and local UI integration passing all mocked tests.
 
 ---
 
-## Milestone 5: AI Draft Generation
+## Stage 4: AI Draft Generation
 
 ### Objective
-Implement LLM-powered email draft generation with provider abstraction.
+Implement LLM-powered draft generation using Gemini API (primary) with local Ollama fallback, entity context assembly, prompt templates, and draft versioning.
 
 ### Dependencies
-Milestone 2 complete (needs company/contact data). Milestone 4 complete (must check address usability before generating).
+Stage 1 complete (data model) and Stage 3 complete (verification eligibility).
 
 ### Features
-- Outreach thread creation: `POST /api/v1/outreach-threads`.
-- Draft generation: `POST /api/v1/outreach-threads/{thread_id}/drafts/generate`.
-- Gemini API client module.
-- Ollama API client module.
-- LLM provider abstraction (interface/protocol pattern).
-- Draft versioning logic.
-- Prompt template stored in configuration.
-- Audit log entries for draft generation.
+- Provider abstraction interface (`LLMProvider` protocol) implemented by `GeminiProvider` and `OllamaProvider`.
+- Configuration toggle (`llm_provider: 'gemini' | 'ollama'`) switchable without code changes.
+- Rich context assembly: organization description, opportunity details, contact background, notes, and LinkedIn post excerpt.
+- Prompt template enforcing structured output (`SUBJECT:` and `BODY:`).
+- Defensive output validation: check length bounds and absence of unfilled placeholders (`[COMPANY]`, `{{...}}`).
+- Versioning engine: each generation inserts a new draft version ($N+1$).
+- Thread initialization: `POST /api/v1/outreach-threads` locks selected verified email.
 
 ### Expected Files / Modules
 ```
 backend/app/
-├── integrations/
-│   ├── gemini.py
-│   └── ollama.py
 ├── providers/
-│   ├── __init__.py
-│   ├── llm_interface.py
-│   └── llm_factory.py
-├── api/v1/
-│   ├── outreach_threads.py
-│   └── drafts.py
-└── services/
-    ├── outreach_service.py
-    └── draft_service.py
+│   ├── llm_interface.py        # Protocol definition & DraftResult dataclass
+│   └── llm_factory.py          # Provider factory
+├── integrations/
+│   ├── gemini.py               # Google Generative AI client
+│   └── ollama.py               # Local Ollama HTTP client
+├── services/draft_service.py
+└── api/v1/drafts.py
 ```
 
 ### Tests
-- Create an outreach thread for a contact + opportunity pair.
-- Duplicate thread creation returns existing thread ID.
-- Generate a draft using mocked Gemini → draft stored with version 1.
-- Generate again → draft stored with version 2.
-- Switch provider to Ollama (mocked) → same interface, same result structure.
-- Generation fails → no draft record created.
-- Selected address not verified → generation returns error.
-- Audit log entry created for each generation.
+- Generate draft via mocked Gemini $\rightarrow$ stored as version 1.
+- Regenerate draft $\rightarrow$ stored as version 2; version 1 preserved.
+- Switch provider to Ollama in config $\rightarrow$ generates draft with same output schema.
+- Malformed or placeholder-laden output $\rightarrow$ rejected with generation error.
+- Unverified address $\rightarrow$ draft generation blocked.
 
 ### Acceptance Criteria
-- Both providers work via the same interface.
-- Draft versioning is correct.
-- Address usability is checked before generation.
+- Personalized drafts generated and versioned.
+- Switching providers requires only configuration change.
 
 ### Definition of Done
-- All Milestone 5 tests pass with mocked LLMs.
-- Ready for live API keys.
+All draft service tests pass with mocked providers; local UI displays draft review.
 
 ---
 
-## Milestone 6: Approval Workflow
+## Stage 5: Approval & Sending Safeguards
 
 ### Objective
-Implement the approval gate. No email can be sent without a recorded approval.
+Implement approval integrity with SHA-256 content hashing, persistent send-attempt lifecycle state machine, delivery serialization lock, 20/day quota, and dry-run mode.
 
 ### Dependencies
-Milestone 5 complete.
+Stage 4 complete.
 
 ### Features
-- Draft retrieval: `GET /api/v1/outreach-threads/{thread_id}/drafts/current`.
-- Draft editing: `PUT /api/v1/drafts/{draft_id}` (creates new version with `is_edited = 1`).
-- Draft approval: `POST /api/v1/drafts/{draft_id}/approve`.
-- Validation: only the current version can be approved.
-- Audit log entries for approval events.
+- Approval endpoint (`POST /api/v1/drafts/{id}/approve`):
+  - Calculates $\text{SHA256}(\text{recipient} + \text{"\textbackslash n"} + \text{subject} + \text{"\textbackslash n"} + \text{body} + \text{"\textbackslash n"} + \text{draft\_id} + \text{"\textbackslash n"} + \text{version})$.
+  - Stores hash and content snapshots in `approvals` table.
+- Invalidation on edit: modifying a draft creates version $N+1$, invalidating approval for version $N$.
+- 10-point pre-send checklist enforcement against persistent database records.
+- Persistent send-attempt lifecycle (`send_attempts`): `pending` $\rightarrow$ `sending` $\rightarrow$ `sent` / `failed` / `unknown`.
+- Idempotency key generated and committed before transmission.
+- Delivery lock: Python in-process mutex serializing send operations.
+- Dry-run mode (`dry_run = true` default): executes full pipeline, validates hash, records lifecycle states, and simulates delivery without SMTP connection.
+- Global pause toggle (`POST /api/v1/settings/pause`, `POST /api/v1/settings/resume`).
+
+### Expected Files / Modules
+```
+backend/app/
+├── services/
+│   ├── approval_service.py     # Content hash calculation & validation
+│   └── send_guard_service.py   # 10 pre-send checks & mutex lock
+├── api/v1/
+│   ├── approvals.py
+│   └── sending.py              # Send attempt initiation
+└── models/send_attempt.py
+```
 
 ### Tests
-- Approve a draft → approval record created.
-- Approve an older version → rejected.
-- Edit a draft → new version created, old approval no longer valid for new version.
-- Approve the edited version → succeeds.
+- Approval generates correct SHA-256 content hash.
+- Modifying draft after approval $\rightarrow$ send blocked due to hash mismatch.
+- Attempting to send unapproved draft $\rightarrow$ HTTP 403.
+- Attempting to send when paused or quota exceeded (20/day) $\rightarrow$ blocked.
+- Dry-run dispatch $\rightarrow$ send attempt transitions to `sent` with `dry_run = 1`, no SMTP socket opened.
+- Duplicate send attempt with same idempotency key $\rightarrow$ blocked.
 
 ### Acceptance Criteria
-- Approval records are correctly linked to specific draft versions.
-- Edited drafts require re-approval.
+- Approval integrity mathematically guaranteed by content hash.
+- Send-attempt lifecycle persisted in SQLite before any delivery attempt.
 
 ### Definition of Done
-- Approval gate is enforced. Tests pass.
+All Stage 5 safety tests pass; Local UI displays approval and send-attempt status.
 
 ---
 
-## Milestone 7: Email Sending
+## Stage 6: Zoho Email Integration (SMTP & IMAP)
 
 ### Objective
-Send approved emails via Zoho SMTP with all safety controls.
+Connect Zoho SMTP for live outbound transmission and Zoho IMAP for inbound reply and bounce monitoring with automatic follow-up suppression.
 
 ### Dependencies
-Milestone 6 complete (approval required). Milestone 4 complete (address verification required).
+Stage 5 complete.
 
 ### Features
-- Send endpoint: `POST /api/v1/outreach-threads/{thread_id}/send`.
-- Zoho SMTP client module.
-- Pre-send checklist enforcement (all 10 mandatory checks from SECURITY_AND_COMPLIANCE.md § 9.1).
-- Daily quota management.
-- Global pause toggle: `POST /api/v1/settings/pause`, `POST /api/v1/settings/resume`.
-- Follow-up schedule creation after successful send (days 3, 7, 14).
-- `outreach_events` record creation.
-- Audit log entries.
+- Zoho SMTP client module with TLS 587 encryption, connection timeout, and error handling.
+- Message threading: follow-up emails set `In-Reply-To` and `References` headers matching initial sent `Message-ID`.
+- Live send transition: when `dry_run = false`, opens SMTP socket, transmits message, and updates `send_attempts` to `sent` or `failed`.
+- Indeterminate failure handling: connection drops mid-flight mark attempt as `unknown` (never auto-resend).
+- Zoho IMAP poller (background thread or manual trigger):
+  - Fetches unread messages and delivery failure reports.
+  - Matches replies via `In-Reply-To` / `References` headers.
+  - Automatically updates thread to `replied` and cancels pending follow-ups.
+  - Detects hard bounces, records bounce in `bounces`, and flags `email_addresses.suppressed = 1`.
 
 ### Expected Files / Modules
 ```
 backend/app/
 ├── integrations/
-│   └── zoho_smtp.py
-├── api/v1/
-│   └── sending.py
-└── services/
-    └── sending_service.py
+│   ├── zoho_smtp.py            # SMTP client
+│   └── zoho_imap.py            # IMAP poller
+└── services/inbox_service.py   # Reply matching & bounce handling
 ```
 
 ### Tests
-- Send approved email → `outreach_events` record created, follow-up schedules created.
-- Send without approval → HTTP 403, `send_blocked` audit entry.
-- Send when globally paused → blocked.
-- Send when daily limit reached → blocked.
-- Send to suppressed contact → blocked.
-- Send to unverified address → blocked.
-- Send to `catch-all` without approval → blocked.
-- Duplicate send prevention (same thread, same type) → blocked.
-- SMTP failure → no `outreach_events` record, quota not incremented.
+- Mocked SMTP: successful transmission $\rightarrow$ record `outreach_events`, update `send_attempts.status = 'sent'`.
+- Mocked SMTP timeout $\rightarrow$ record `send_attempts.status = 'unknown'`.
+- Mocked IMAP reply $\rightarrow$ thread updated to `replied`, all pending follow-ups suppressed.
+- Mocked IMAP hard bounce $\rightarrow$ address suppressed, bounce logged.
 
 ### Acceptance Criteria
-- All pre-send checks enforced.
-- Quota tracked correctly across process restarts.
-- Audit log captures every blocked or successful send.
+- Live delivery executes with persistent lifecycle state.
+- Inbound replies reliably suppress pending follow-ups.
 
 ### Definition of Done
-- All Milestone 7 tests pass with mocked Zoho SMTP.
-- Ready for live SMTP credentials.
+SMTP and IMAP integrations pass all mocked unit and integration tests.
 
 ---
 
-## Milestone 8: Reply and Bounce Tracking
+## Stage 7: Follow-up Scheduler & Recovery
 
 ### Objective
-Monitor the Zoho inbox for replies and bounce notifications.
+Implement persistent, database-backed follow-up scheduling (days 3, 7, and 14) using APScheduler with full recovery across application restarts.
 
 ### Dependencies
-Milestone 7 complete (need sent message IDs to match against).
+Stage 6 complete.
 
 ### Features
-- Zoho IMAP client module.
-- IMAP polling job (run via scheduler or manual trigger for testing).
-- Reply detection and thread matching.
-- Bounce detection and address flagging.
-- Follow-up suppression on reply detection.
-- Audit log entries for all events.
+- Upon initial send, insert `followup_schedules` records for days 3, 7, and 14.
+- In-process APScheduler engine polling `followup_schedules` periodically.
+- Application startup recovery routine:
+  1. Queries SQLite for overdue or pending schedules (`scheduled_date <= today`).
+  2. Verifies parent thread is not replied, bounced, or suppressed.
+  3. Generates follow-up draft if missing (`status = 'draft_ready'`).
+  4. Local UI alerts user to review and approve follow-up draft.
+  5. Once approved, dispatches via Stage 5 send pipeline.
+- Suppression safety: any reply, bounce, or manual suppression automatically cancels future follow-ups.
 
 ### Expected Files / Modules
 ```
 backend/app/
-├── integrations/
-│   └── zoho_imap.py
-└── services/
-    └── inbox_service.py
+├── scheduler/
+│   ├── runner.py               # APScheduler lifecycle & job definitions
+│   └── recovery.py             # Startup recovery scanner
+└── services/followup_service.py
 ```
 
 ### Tests
-- Mocked IMAP: message with matching `In-Reply-To` → reply recorded, follow-ups suppressed.
-- Mocked IMAP: DSN bounce message → bounce recorded, address flagged.
-- Mocked IMAP: unmatched message → no association, no error.
-- Follow-up suppression: all pending follow-ups for the thread are suppressed.
-- Audit log entries created.
+- Initial send creates 3 persistent follow-up records.
+- Simulated restart $\rightarrow$ overdue follow-up is recovered and draft is generated.
+- Follow-up cannot send without separate explicit approval and content hash.
+- Reply received prior to follow-up date $\rightarrow$ follow-up cancelled.
 
 ### Acceptance Criteria
-- Reply correctly linked to outreach thread.
-- Bounce correctly linked to address.
-- Follow-ups suppressed on reply.
+- Follow-up scheduling survives server restarts without duplicate messages.
+- Every follow-up requires separate user approval.
 
 ### Definition of Done
-- All Milestone 8 tests pass with mocked IMAP.
+Scheduler and recovery service tested and verified.
 
 ---
 
-## Milestone 9: Follow-up Scheduler
+## Stage 8: Google Sheets Synchronization
 
 ### Objective
-Run the persistent scheduler to automatically generate and send follow-ups on schedule.
+Implement manual, bidirectional synchronization with Google Sheets API v4 using service account credentials, stable record IDs, conflict detection, and idempotency.
 
 ### Dependencies
-Milestone 7 complete. Milestone 8 complete (suppress on reply).
+Stage 1 complete (data model) and Stage 6 complete (outreach status).
 
 ### Features
-- APScheduler integration (or equivalent).
-- Scheduler starts with the FastAPI application.
-- Job: check for due follow-ups, generate drafts, update status to `draft_ready`.
-- Job: check for approved follow-ups, send if all pre-send checks pass.
-- Job: poll IMAP inbox (every N minutes, configurable).
-- Scheduler respects global pause and daily quota.
-- Audit log entries for all scheduler actions.
+- Google Sheets API v4 client module.
+- Manual sync endpoint (`POST /api/v1/sync/sheets`) and Local UI sync dashboard.
+- Stable UUID `external_id` mapping across organizations, opportunities, contacts, and outreach status.
+- Conflict detection: flags rows modified in both Sheets and SQLite since last sync.
+- Local UI conflict resolver view (`POST /api/v1/sync/resolve-conflict`).
+- Idempotency: repeated sync runs without changes produce zero modifications.
+
+### Expected Files / Modules
+```
+backend/app/
+├── integrations/google_sheets.py
+├── services/sync_service.py
+└── api/v1/sync.py
+```
 
 ### Tests
-- Scheduler runs on startup.
-- Due follow-up draft is generated automatically.
-- Approved follow-up is sent on next scheduler run.
-- Scheduler respects global pause.
-- Scheduler respects daily quota.
-- Reply received before follow-up is sent → follow-up suppressed before dispatch.
+- Sync empty spreadsheet $\rightarrow$ exports all local records with headers.
+- Update row in Sheets $\rightarrow$ sync updates local SQLite record.
+- Update in both sources $\rightarrow$ conflict flagged, not auto-overwritten.
+- Double sync with no changes $\rightarrow$ idempotent zero operations.
 
 ### Acceptance Criteria
-- Full follow-up lifecycle works without manual API calls for generation and sending.
-- Approval step remains manual.
+- Bidirectional sync operates reliably without data loss or silent overwrites.
 
 ### Definition of Done
-- Scheduler runs correctly. All tests pass.
+Google Sheets sync service verified with mocked API tests.
 
 ---
 
-## Milestone 10: Google Sheets Sync
+## Stage 9: Integration Testing & Hardening
 
 ### Objective
-Implement manual bidirectional synchronization with Google Sheets.
+Execute comprehensive end-to-end integration tests, verify security boundaries, test failure recovery, polish user-facing error messages, and document final operational instructions.
 
 ### Dependencies
-Milestone 2 complete (entities to sync). Milestone 7 complete (outreach status to export).
+All prior stages complete.
 
 ### Features
-- Google Sheets API client module.
-- Sync endpoint: `POST /api/v1/sync/sheets`.
-- Conflict detection.
-- Conflict resolution endpoint: `POST /api/v1/sync/resolve-conflict`.
-- `sheets_sync_state` management.
-- Idempotency enforcement.
-- Audit log entries.
+- End-to-end workflow test 1: Employment opportunity $\rightarrow$ LinkedIn capture $\rightarrow$ Reoon verification $\rightarrow$ Gemini draft $\rightarrow$ approval hash $\rightarrow$ dry-run send $\rightarrow$ IMAP reply detected $\rightarrow$ follow-up auto-suppressed.
+- End-to-end workflow test 2: Freelance prospect $\rightarrow$ post capture $\rightarrow$ draft $\rightarrow$ send $\rightarrow$ follow-up schedule $\rightarrow$ startup recovery $\rightarrow$ follow-up approved and sent.
+- Security boundary test: verify localhost binding (`127.0.0.1`), extension secret enforcement, and credential leakage prevention in logs.
+- Operational documentation in README with Windows 11 setup and startup instructions.
 
 ### Tests
-- Sync with no changes → zero creates, zero updates, zero conflicts.
-- New record in Sheets → imported to SQLite.
-- New record in SQLite → exported to Sheets.
-- Record changed in Sheets only → SQLite updated.
-- Record changed in SQLite only → Sheets updated.
-- Record changed in both → conflict surfaced, not auto-resolved.
-- Running sync twice → idempotent result.
+- Full test suite execution: `pytest backend/tests/ -v` passes with $> 80\%$ overall coverage and $100\%$ coverage on pre-send checks and approval hash verification.
+- Zero regressions across previous stage tests.
 
 ### Acceptance Criteria
-- All sync scenarios handled correctly.
-- Conflicts surfaced, never silently overwritten.
-- Idempotency verified.
+- Complete application is operational, hardened, and verified for single-user Windows 11 daily use.
 
 ### Definition of Done
-- All Milestone 10 tests pass with mocked Sheets API.
-- Ready for live Google credentials.
+All tests pass, documentation is verified, and project is implementation-ready.
 
 ---
 
-## Milestone 11: Integration Testing and Polish
-
-### Objective
-End-to-end testing of the complete workflow. Bug fixes, error message improvements, and documentation updates.
-
-### Dependencies
-All previous milestones complete.
-
-### Features
-- End-to-end test: capture → verify → draft → approve → send → reply detected → follow-ups suppressed.
-- End-to-end test: capture → draft → send → no reply → follow-up generated → follow-up approved → follow-up sent.
-- Error message review: all user-facing errors are clear and actionable.
-- README updated with complete setup instructions.
-- `.env.example` reviewed for completeness.
-
-### Tests
-- Full workflow tests covering both primary scenarios.
-- Regression: all previous milestone tests still pass.
-
-### Acceptance Criteria
-- Both primary workflows complete without errors.
-- All previous tests pass.
-- Setup instructions are accurate.
-
-### Definition of Done
-- Application is ready for daily use.
-- No known blocking bugs.
-
----
-
-## Dependency Graph
+## Implementation Stage Dependency Graph
 
 ```mermaid
 flowchart TD
-    M0[Milestone 0\nProject Init] --> M1[Milestone 1\nDatabase Schema]
-    M1 --> M2[Milestone 2\nCRUD API]
-    M2 --> M3[Milestone 3\nChrome Extension]
-    M2 --> M4[Milestone 4\nEmail Verification]
-    M4 --> M5[Milestone 5\nAI Draft Generation]
-    M2 --> M5
-    M5 --> M6[Milestone 6\nApproval Workflow]
-    M6 --> M7[Milestone 7\nEmail Sending]
-    M4 --> M7
-    M7 --> M8[Milestone 8\nReply and Bounce Tracking]
-    M7 --> M9[Milestone 9\nFollow-up Scheduler]
-    M8 --> M9
-    M2 --> M10[Milestone 10\nGoogle Sheets Sync]
-    M7 --> M10
-    M9 --> M11[Milestone 11\nIntegration Testing]
-    M10 --> M11
-    M3 --> M11
+    S0["Stage 0: Project Foundation\n(FastAPI, SQLite, Alembic, Health Test)"]
+    S1["Stage 1: Core Data & Local UI\n(21 Models, Deduplication, Jinja2 Web UI)"]
+    S2["Stage 2: Chrome Extension\n(MV3, LinkedIn Profiles/Posts, Overlays)"]
+    S3["Stage 3: Email Verification\n(Reoon Client, 30-day Cache, Catch-All Gate)"]
+    S4["Stage 4: AI Draft Generation\n(Gemini/Ollama, Context, Versioning)"]
+    S5["Stage 5: Approval & Sending Safeguards\n(SHA-256 Hashes, Send Attempts, Dry-Run, Quota)"]
+    S6["Stage 6: Zoho Email Integration\n(SMTP TLS, IMAP Poller, Reply/Bounce Suppression)"]
+    S7["Stage 7: Follow-up Scheduler\n(Database-Backed Scheduling & Startup Recovery)"]
+    S8["Stage 8: Google Sheets Sync\n(Bidirectional Sync, Conflicts, Idempotency)"]
+    S9["Stage 9: Testing & Hardening\n(Full E2E Tests, Security Audit, Runbooks)"]
+
+    S0 --> S1
+    S1 --> S2
+    S1 --> S3
+    S1 --> S4
+    S3 --> S4
+    S4 --> S5
+    S1 --> S5
+    S5 --> S6
+    S6 --> S7
+    S1 --> S8
+    S6 --> S8
+    S2 --> S9
+    S7 --> S9
+    S8 --> S9
 ```
