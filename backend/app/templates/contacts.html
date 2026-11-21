@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block title %}Contacts — Tandora{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Contacts & Decision-Makers</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem;">Recruiters, hiring managers, CTOs, and client prospects with verifiable provenance.</p>
+  </div>
+  <div class="actions">
+    <a href="/contacts/new" class="btn btn-primary">+ New Contact</a>
+  </div>
+</div>
+
+{% if duplicate_count > 0 and current_dup != 1 %}
+<div class="alert alert-warning">
+  <strong>Action Required:</strong> {{ duplicate_count }} contact(s) flagged as potential duplicates need review.
+  <a href="/contacts?duplicate_flag=1" style="font-weight: 600; text-decoration: underline; margin-left: 0.5rem; color: inherit;">Show Only Flagged Contacts &rarr;</a>
+</div>
+{% endif %}
+
+<div class="panel">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 1rem;">
+    <div style="display: flex; gap: 0.5rem; align-items: center;">
+      <span style="font-size: 0.875rem; color: var(--text-muted);">Filter:</span>
+      <a href="/contacts" class="btn btn-sm {% if current_dup is none and current_suppressed is none %}btn-primary{% else %}btn-secondary{% endif %}">All</a>
+      <a href="/contacts?duplicate_flag=1" class="btn btn-sm {% if current_dup == 1 %}btn-primary{% else %}btn-secondary{% endif %}">Flagged Duplicates</a>
+      <a href="/contacts?suppressed=1" class="btn btn-sm {% if current_suppressed == 1 %}btn-primary{% else %}btn-secondary{% endif %}">Suppressed</a>
+    </div>
+
+    <form action="/contacts" method="GET" style="display: flex; gap: 0.5rem;">
+      <input type="text" name="search" value="{{ search or '' }}" placeholder="Search name or headline..." class="form-control" style="width: 240px; padding: 0.35rem 0.6rem; font-size: 0.85rem;">
+      <button type="submit" class="btn btn-secondary btn-sm">Search</button>
+    </form>
+  </div>
+
+  {% if contacts %}
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Company</th>
+        <th>Roles</th>
+        <th>Emails (Source)</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in contacts %}
+      <tr {% if c.duplicate_flag %}style="background-color: #fffbeb;"{% endif %}>
+        <td>
+          <a href="/contacts/{{ c.id }}" style="font-weight: 600; color: var(--primary); text-decoration: none;">
+            {{ c.first_name }} {{ c.last_name or '' }}
+          </a>
+          {% if c.duplicate_flag %}
+            <span class="badge badge-warning" style="margin-left: 0.4rem;">FLAGGED DUP</span>
+          {% endif %}
+          {% if c.headline %}
+            <div style="font-size: 0.8rem; color: var(--text-muted); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+              {{ c.headline }}
+            </div>
+          {% endif %}
+        </td>
+        <td>
+          {% if c.company %}
+            <a href="/organizations/{{ c.company.id }}" style="color: var(--text-main); font-weight: 500;">{{ c.company.name }}</a>
+          {% else %}
+            <span style="color: var(--text-muted); font-size: 0.85rem;">Unassigned</span>
+          {% endif %}
+        </td>
+        <td>
+          {% for r in c.roles %}
+            <span class="badge badge-neutral">{{ r.role }}</span>
+          {% else %}
+            -
+          {% endfor %}
+        </td>
+        <td>
+          {% for e in c.emails %}
+            <div style="font-size: 0.85rem; margin-bottom: 0.2rem;">
+              <code>{{ e.address }}</code>
+              <span class="badge badge-info" style="font-size: 0.65rem; padding: 0.1rem 0.35rem;">{{ e.source }}</span>
+              {% if e.suppressed %}<span class="badge badge-danger" style="font-size: 0.65rem;">SUPP</span>{% endif %}
+            </div>
+          {% else %}
+            <span style="color: var(--text-muted); font-size: 0.85rem;">No emails</span>
+          {% endfor %}
+        </td>
+        <td>
+          {% if c.suppressed %}
+            <span class="badge badge-danger">SUPPRESSED</span>
+          {% else %}
+            <span class="badge badge-success">ACTIVE</span>
+          {% endif %}
+        </td>
+        <td>
+          <div style="display: flex; gap: 0.4rem;">
+            <a href="/contacts/{{ c.id }}" class="btn btn-secondary btn-sm">View</a>
+            <form action="/contacts/{{ c.id }}/suppress" method="POST" style="display: inline;">
+              <input type="hidden" name="suppressed" value="{% if c.suppressed %}0{% else %}1{% endif %}">
+              <input type="hidden" name="reason" value="Toggled from contacts list">
+              <button type="submit" class="btn btn-sm {% if c.suppressed %}btn-secondary{% else %}btn-danger{% endif %}">
+                {% if c.suppressed %}Unsuppress{% else %}Suppress{% endif %}
+              </button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color: var(--text-muted); font-size: 0.9rem; padding: 1rem 0;">No contacts found matching the criteria.</p>
+  {% endif %}
+</div>
+{% endblock %}
