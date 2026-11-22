@@ -3,15 +3,21 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.dependencies.auth import require_extension_secret
 from app.schemas.capture import CapturePayload, CaptureResponse
 from app.services.capture_service import ingest_capture
 
 router = APIRouter(prefix="/captures", tags=["Captures"])
 
 
-@router.post("/", response_model=CaptureResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    response_model=CaptureResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_extension_secret)],
+)
 def ingest_capture_endpoint(payload: CapturePayload, db: Session = Depends(get_db)):
-    """Ingest prospect capture from Chrome extension or web form."""
+    """Ingest prospect capture from Chrome extension or web form with extension secret authentication."""
     try:
         response = ingest_capture(db, payload)
         return response
