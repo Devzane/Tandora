@@ -174,7 +174,11 @@ def test_api_captures_ingestion(client):
         "raw_payload": {"notes": "Captured via manual copy paste fallback"},
     }
 
-    r = client.post("/api/v1/captures/", json=payload)
+    r = client.post(
+        "/api/v1/captures/",
+        json=payload,
+        headers={"X-Extension-Secret": "tandora-secure-local-extension-token"},
+    )
     assert r.status_code == 201
     data = r.json()
     assert data["capture_id"] is not None
