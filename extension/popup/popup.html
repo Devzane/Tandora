@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tandora Prospect Capture</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="logo-area">
+      <div class="logo-badge">T</div>
+      <span class="app-title">Tandora</span>
+      <span id="pageTypeBadge" class="badge badge-info">Detecting...</span>
+    </div>
+    <div class="header-actions">
+      <button id="tabReviewBtn" class="tab-btn active" title="Review & Capture">Capture</button>
+      <button id="tabPasteBtn" class="tab-btn" title="Manual Paste Fallback">Quick Paste</button>
+      <button id="tabSettingsBtn" class="tab-btn" title="Extension Settings">⚙️</button>
+    </div>
+  </header>
+
+  <!-- Notification / Alert Banners -->
+  <div id="alertContainer" class="alert-container">
+    <div id="successBanner" class="alert alert-success hidden">
+      <div class="alert-title">✓ Prospect Captured!</div>
+      <div id="successDetails" class="alert-body"></div>
+      <div class="alert-actions">
+        <a id="viewLocalUiLink" href="http://127.0.0.1:8000/" target="_blank" class="btn btn-outline-success btn-xs">Open in Tandora UI</a>
+        <button id="dismissSuccessBtn" class="btn btn-text btn-xs">Dismiss</button>
+      </div>
+    </div>
+    <div id="duplicateBanner" class="alert alert-warning hidden">
+      <div class="alert-title">⚠️ Potential Duplicate</div>
+      <div class="alert-body">A contact with matching signals exists. Flagged for manual review.</div>
+    </div>
+    <div id="errorBanner" class="alert alert-danger hidden">
+      <div class="alert-title">✕ Capture Failed</div>
+      <div id="errorDetails" class="alert-body"></div>
+      <div class="alert-actions">
+        <button id="retryBtn" class="btn btn-outline-danger btn-xs">Retry</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main View 1: Review & Edit Form -->
+  <main id="viewReview" class="view-panel active">
+    <form id="captureForm" autocomplete="off">
+      <!-- Person Section -->
+      <fieldset class="form-section">
+        <legend class="section-legend">👤 Prospect Identity</legend>
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="firstNameInput">First Name *</label>
+            <input type="text" id="firstNameInput" required placeholder="Jane">
+          </div>
+          <div class="form-group flex-1">
+            <label for="lastNameInput">Last Name</label>
+            <input type="text" id="lastNameInput" placeholder="Doe">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="headlineInput">Headline / Job Title</label>
+          <input type="text" id="headlineInput" placeholder="VP of Engineering">
+        </div>
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="locationInput">Location</label>
+            <input type="text" id="locationInput" placeholder="San Francisco, CA">
+          </div>
+          <div class="form-group flex-1">
+            <label for="linkedinUrlInput">LinkedIn Profile URL</label>
+            <input type="url" id="linkedinUrlInput" placeholder="https://linkedin.com/in/...">
+          </div>
+        </div>
+      </fieldset>
+
+      <!-- Company Section -->
+      <fieldset class="form-section">
+        <legend class="section-legend">🏢 Organization</legend>
+        <div class="form-row">
+          <div class="form-group flex-2">
+            <label for="companyNameInput">Company Name</label>
+            <input type="text" id="companyNameInput" placeholder="Acme Corp">
+          </div>
+          <div class="form-group flex-1">
+            <label for="companyTypeSelect">Company Type</label>
+            <select id="companyTypeSelect">
+              <option value="employer">Employer</option>
+              <option value="client">Client</option>
+              <option value="agency">Agency</option>
+              <option value="partner">Partner</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="companyWebsiteInput">Website</label>
+          <input type="url" id="companyWebsiteInput" placeholder="https://acmecorp.com">
+        </div>
+      </fieldset>
+
+      <!-- Opportunity Section -->
+      <fieldset class="form-section">
+        <legend class="section-legend">💼 Opportunity Context</legend>
+        <div class="form-group form-check">
+          <label>
+            <input type="checkbox" id="createOppCheckbox" checked>
+            <span>Create Linked Opportunity</span>
+          </label>
+        </div>
+        <div id="oppFields">
+          <div class="form-row">
+            <div class="form-group flex-2">
+              <label for="oppTitleInput">Opportunity Title</label>
+              <input type="text" id="oppTitleInput" placeholder="e.g. Platform Engineering Lead">
+            </div>
+            <div class="form-group flex-1">
+              <label for="oppTypeSelect">Type</label>
+              <select id="oppTypeSelect">
+                <option value="employment" selected>Employment</option>
+                <option value="freelance_prospect">Freelance</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
+      <!-- LinkedIn Post Context (Conditional) -->
+      <fieldset id="postSection" class="form-section hidden">
+        <legend class="section-legend">📝 LinkedIn Post Details</legend>
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="postAuthorNameInput">Post Author Name</label>
+            <input type="text" id="postAuthorNameInput">
+          </div>
+          <div class="form-group flex-1">
+            <label for="postTimestampInput">Timestamp</label>
+            <input type="text" id="postTimestampInput" readonly>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="postTextInput">Post Excerpt</label>
+          <textarea id="postTextInput" rows="2" placeholder="Post excerpt..."></textarea>
+        </div>
+      </fieldset>
+
+      <!-- Communication Channels: Emails -->
+      <fieldset class="form-section">
+        <legend class="section-legend">✉️ Email Addresses</legend>
+        <div id="emailsList" class="channel-list"></div>
+        <div class="channel-add-row">
+          <input type="email" id="newEmailInput" placeholder="Add email address..." class="input-xs">
+          <select id="newEmailSourceSelect" class="input-xs">
+            <option value="LinkedIn">LinkedIn</option>
+            <option value="ContactOut">ContactOut</option>
+            <option value="Apollo">Apollo</option>
+            <option value="manual" selected>Manual</option>
+          </select>
+          <button type="button" id="addEmailBtn" class="btn btn-secondary btn-xs">+ Add</button>
+        </div>
+      </fieldset>
+
+      <!-- Communication Channels: Phones -->
+      <fieldset class="form-section">
+        <legend class="section-legend">📞 Phone Numbers</legend>
+        <div id="phonesList" class="channel-list"></div>
+        <div class="channel-add-row">
+          <input type="text" id="newPhoneInput" placeholder="Add phone number..." class="input-xs">
+          <select id="newPhoneSourceSelect" class="input-xs">
+            <option value="ContactOut">ContactOut</option>
+            <option value="Apollo">Apollo</option>
+            <option value="LinkedIn">LinkedIn</option>
+            <option value="manual" selected>Manual</option>
+          </select>
+          <button type="button" id="addPhoneBtn" class="btn btn-secondary btn-xs">+ Add</button>
+        </div>
+      </fieldset>
+
+      <!-- User Notes -->
+      <fieldset class="form-section">
+        <legend class="section-legend">📋 Capture Notes</legend>
+        <textarea id="userNotesInput" rows="2" placeholder="Notes on prospect or conversation context..."></textarea>
+      </fieldset>
+
+      <!-- Submit Footer -->
+      <div class="submit-footer">
+        <button type="submit" id="submitCaptureBtn" class="btn btn-primary btn-block">
+          <span id="submitSpinner" class="spinner hidden"></span>
+          <span id="submitText">Capture to Tandora</span>
+        </button>
+      </div>
+    </form>
+  </main>
+
+  <!-- Main View 2: Manual Copy & Paste Fallback -->
+  <main id="viewPaste" class="view-panel">
+    <div class="paste-instructions">
+      <p class="text-muted text-sm">
+        <strong>Manual Fallback Parser:</strong> When third-party extension overlays (ContactOut/Apollo) use closed shadow roots or sandboxed iframes, copy their text and paste below.
+      </p>
+    </div>
+    <div class="form-group">
+      <label for="pasteTextarea">Paste Contact / Overlay Text:</label>
+      <textarea id="pasteTextarea" rows="8" placeholder="Paste contact details, emails, or profile info here..."></textarea>
+    </div>
+    <div class="form-group">
+      <label for="pasteSourceSelect">Default Source Tag:</label>
+      <select id="pasteSourceSelect">
+        <option value="ContactOut">ContactOut</option>
+        <option value="Apollo">Apollo</option>
+        <option value="LinkedIn">LinkedIn</option>
+        <option value="manual" selected>Manual / Web</option>
+      </select>
+    </div>
+    <button type="button" id="parsePasteBtn" class="btn btn-primary btn-block">
+      Parse & Populate Form
+    </button>
+  </main>
+
+  <!-- Main View 3: Settings -->
+  <main id="viewSettings" class="view-panel">
+    <div class="form-section">
+      <legend class="section-legend">⚙️ Extension Configuration</legend>
+      <div class="form-group">
+        <label for="backendUrlInput">Tandora Local Backend URL</label>
+        <input type="url" id="backendUrlInput" value="http://127.0.0.1:8000">
+      </div>
+      <div class="form-group">
+        <label for="secretInput">Extension Secret (X-Extension-Secret)</label>
+        <input type="password" id="secretInput" placeholder="Enter configured API secret">
+        <span class="text-xs text-muted">Configured in Tandora backend .env as EXTENSION_API_SECRET.</span>
+      </div>
+      <div class="form-row">
+        <button type="button" id="saveSettingsBtn" class="btn btn-primary btn-xs flex-1">Save Settings</button>
+        <button type="button" id="testConnBtn" class="btn btn-secondary btn-xs flex-1">Test Connection</button>
+      </div>
+      <div id="connStatus" class="status-msg text-xs"></div>
+    </div>
+  </main>
+
+  <script src="../parser.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
