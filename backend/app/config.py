@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     fastapi_host: str = "127.0.0.1"
     fastapi_port: int = 8000
     extension_api_secret: str = "tandora-secure-local-extension-token"
+    chrome_extension_id: str = "hgekmkmaeehbpbegfhgognalocgfhncp"
     daily_sending_limit: int = 20
     dry_run: bool = True
 

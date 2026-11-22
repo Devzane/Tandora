@@ -29,9 +29,16 @@ class LocalSecurityMiddleware(BaseHTTPMiddleware):
         # 2. State-Changing Request Origin / CSRF Defense
         if request.method not in SAFE_METHODS:
             origin = request.headers.get("origin")
-            is_chrome_extension = bool(origin and origin.startswith("chrome-extension://"))
-
-            if not is_chrome_extension:
+            
+            if origin and origin.startswith("chrome-extension://"):
+                ext_id = origin.replace("chrome-extension://", "").split("/")[0].lower()
+                if ext_id != settings.chrome_extension_id.lower():
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": f"Unauthorized extension origin: '{origin}'."},
+                    )
+                # Legitimate expected extension: permitted past browser CSRF check to route-level auth
+            else:
                 sec_fetch_site = request.headers.get("sec-fetch-site")
                 if sec_fetch_site == "cross-site":
                     return JSONResponse(
