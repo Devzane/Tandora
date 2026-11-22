@@ -42,6 +42,10 @@ def test_capture_authentication_invalid_secret_returns_401(client):
     assert "Invalid or missing extension secret" in response.json()["detail"]
 
 
+EXPECTED_EXT_ORIGIN = "chrome-extension://hgekmkmaeehbpbegfhgognalocgfhncp"
+UNEXPECTED_EXT_ORIGIN = "chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn"
+
+
 def test_capture_authentication_valid_secret_succeeds(client):
     """Verify capture endpoint accepts requests with valid X-Extension-Secret."""
     payload = {
@@ -56,8 +60,8 @@ def test_capture_authentication_valid_secret_succeeds(client):
     assert data["contact_id"] is not None
 
 
-def test_chrome_extension_origin_accepted_with_secret(client):
-    """Verify requests originating from Chrome Extension context are accepted by middleware."""
+def test_expected_chrome_extension_origin_accepted_with_secret(client):
+    """Verify requests originating from the expected Chrome Extension ID are accepted."""
     payload = {
         "capture_type": "linkedin_profile",
         "source_url": "https://www.linkedin.com/in/test-chrome-ext",
@@ -65,12 +69,59 @@ def test_chrome_extension_origin_accepted_with_secret(client):
     }
     headers = {
         "X-Extension-Secret": "tandora-secure-local-extension-token",
-        "Origin": "chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn",
+        "Origin": EXPECTED_EXT_ORIGIN,
         "Sec-Fetch-Site": "cross-site",
     }
     response = client.post("/api/v1/captures/", json=payload, headers=headers)
     assert response.status_code == 201
     assert response.json()["capture_id"] is not None
+
+
+def test_unexpected_chrome_extension_origin_rejected_with_403(client):
+    """Verify requests from unexpected Chrome extension IDs are rejected with HTTP 403."""
+    payload = {
+        "capture_type": "linkedin_profile",
+        "source_url": "https://www.linkedin.com/in/test-unexpected-ext",
+        "contact": {"first_name": "RogueExt", "last_name": "User"},
+    }
+    headers = {
+        "X-Extension-Secret": "tandora-secure-local-extension-token",
+        "Origin": UNEXPECTED_EXT_ORIGIN,
+    }
+    response = client.post("/api/v1/captures/", json=payload, headers=headers)
+    assert response.status_code == 403
+    assert "Unauthorized extension origin" in response.json()["detail"]
+
+
+def test_expected_chrome_extension_origin_missing_secret_rejected_with_401(client):
+    """Verify request with expected extension ID but missing secret returns HTTP 401."""
+    payload = {
+        "capture_type": "linkedin_profile",
+        "source_url": "https://www.linkedin.com/in/test-expected-ext-nosecret",
+        "contact": {"first_name": "NoSecret", "last_name": "User"},
+    }
+    headers = {
+        "Origin": EXPECTED_EXT_ORIGIN,
+    }
+    response = client.post("/api/v1/captures/", json=payload, headers=headers)
+    assert response.status_code == 401
+    assert "Invalid or missing extension secret" in response.json()["detail"]
+
+
+def test_expected_chrome_extension_origin_invalid_secret_rejected_with_401(client):
+    """Verify request with expected extension ID but wrong secret returns HTTP 401."""
+    payload = {
+        "capture_type": "linkedin_profile",
+        "source_url": "https://www.linkedin.com/in/test-expected-ext-badsecret",
+        "contact": {"first_name": "BadSecret", "last_name": "User"},
+    }
+    headers = {
+        "X-Extension-Secret": "wrong-secret-token-12345",
+        "Origin": EXPECTED_EXT_ORIGIN,
+    }
+    response = client.post("/api/v1/captures/", json=payload, headers=headers)
+    assert response.status_code == 401
+    assert "Invalid or missing extension secret" in response.json()["detail"]
 
 
 def test_malicious_web_origin_rejected_by_middleware(client):
