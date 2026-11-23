@@ -1,7 +1,12 @@
 """Centralized application configuration and on-demand credential validation."""
 
+import re
+import secrets
 from functools import lru_cache
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+CHROME_EXTENSION_ID_PATTERN = re.compile(r"^[a-p]{32}$")
 
 
 class MissingCredentialError(RuntimeError):
@@ -14,10 +19,23 @@ class Settings(BaseSettings):
     database_path: str = "./data/tandora.db"
     fastapi_host: str = "127.0.0.1"
     fastapi_port: int = 8000
-    extension_api_secret: str = "tandora-secure-local-extension-token"
-    chrome_extension_id: str = "hgekmkmaeehbpbegfhgognalocgfhncp"
+    extension_api_secret: str = Field(
+        default_factory=lambda: secrets.token_hex(32),
+        description="Shared secret header for Chrome Extension API requests. Configurable via EXTENSION_API_SECRET.",
+    )
+    chrome_extension_id: str = "doaipkncpfpmingeoanfpealbjojkmlp"
     daily_sending_limit: int = 20
     dry_run: bool = True
+
+    @field_validator("chrome_extension_id", mode="after")
+    @classmethod
+    def validate_chrome_extension_id(cls, v: str) -> str:
+        cleaned = v.strip().lower() if v else ""
+        if not CHROME_EXTENSION_ID_PATTERN.match(cleaned):
+            raise ValueError(
+                f"Invalid Chrome extension ID: '{v}'. Expected 32 lowercase characters between 'a' and 'p' (matching ^[a-p]{{32}}$)."
+            )
+        return cleaned
 
     # AI / LLM Configuration
     llm_provider: str = "gemini"
