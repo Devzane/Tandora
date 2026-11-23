@@ -78,7 +78,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   let currentPhones = [];
   let storedConfig = {
     backendUrl: "http://127.0.0.1:8000",
-    extensionSecret: "tandora-secure-local-extension-token",
+    extensionSecret: "",
   };
 
   // --- 1. Load Stored Configuration ---
@@ -388,6 +388,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     if (!firstName && !companyName) {
       showError("Please provide at least a Prospect First Name or Company Name.");
+      return;
+    }
+
+    if (!storedConfig.extensionSecret || !storedConfig.extensionSecret.trim()) {
+      showError("Extension secret is not configured. Please enter your X-Extension-Secret in the Settings tab.");
+      switchTab(tabSettingsBtn, viewSettings);
       return;
     }
 
