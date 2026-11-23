@@ -122,7 +122,11 @@ The application binds strictly to `127.0.0.1:8000`. No cloud infrastructure, con
 **Responsibilities**:
 - Calls Reoon API (`mode=power`) to verify address deliverability.
 - Caches verification results for 30 days to protect API credits.
-- Gating: `safe` addresses proceed; `catch-all` addresses are held for explicit user approval (`catch_all_approved = 1`); `invalid`/`unknown`/`disposable` are rejected.
+- Confirmed Stage 3 Classification Policy:
+  - `safe`, `catch-all`, `role_account`: Automatically approved and eligible for outreach drafting.
+  - `invalid`, `unknown`, `disposable`: Suppressed (blocked from outreach), with suppression reversible through manual review.
+  - Network timeouts and technical API errors remain explicitly distinguished from genuine Reoon `unknown` deliverability results.
+  - Verification approval does not authorize email sending: manual approval of every draft remains inviolable.
 
 ### 2.11 Google Sheets Synchronization
 
