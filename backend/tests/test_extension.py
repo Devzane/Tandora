@@ -66,6 +66,31 @@ def test_extension_manifest_validity_and_least_privilege_permissions():
             assert header == b"\x89PNG\r\n\x1a\n", f"Icon {size} is not a valid PNG"
 
 
+def test_manifest_key_presence_and_derived_extension_id():
+    """Verify manifest.json specifies a deterministic public key that derives the configured extension ID."""
+    import base64
+    import hashlib
+    from app.config import get_settings
+
+    with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    assert "key" in manifest, "manifest.json must contain a 'key' field for deterministic extension ID"
+    key_b64 = manifest["key"]
+    assert len(key_b64) > 100, "manifest key must be a valid base64-encoded public key"
+
+    pub_der = base64.b64decode(key_b64)
+    assert pub_der[:2] == b"\x30\x82", "Key must be DER-encoded SubjectPublicKeyInfo (sequence tag 0x30)"
+
+    digest = hashlib.sha256(pub_der).hexdigest()[:32]
+    derived_id = "".join(chr(ord("a") + int(c, 16)) for c in digest)
+
+    expected_id = get_settings().chrome_extension_id
+    assert derived_id == expected_id, (
+        f"Derived extension ID '{derived_id}' from manifest key must match configured CHROME_EXTENSION_ID '{expected_id}'"
+    )
+
+
 def test_heuristic_parser_regex_and_extraction():
     """Verify email and phone extraction patterns match parser.js specifications."""
     # Test email extraction regex
@@ -151,3 +176,20 @@ def test_missing_and_malformed_fields_handling():
     123
     """
     assert email_regex.findall(malformed_sample) == []
+
+
+def test_no_hardcoded_secrets_in_extension_source_files():
+    """Verify extension source files do not contain hardcoded secrets."""
+    banned_tokens = [
+        "tandora-secure-local-extension-token",
+        "secret-token",
+        "d3b07384d113edec49eaa6238ad5ff00f913d8d85f67b45a64d1f2e8be66807f",
+    ]
+    js_files = list(EXTENSION_DIR.rglob("*.js")) + [MANIFEST_PATH]
+    assert len(js_files) > 0
+
+    for file_path in js_files:
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+            for token in banned_tokens:
+                assert token not in content, f"Hardcoded secret token '{token}' found in {file_path.name}"
