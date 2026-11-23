@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "Tandora Prospect Capture",
   "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAhEvG2ZGHnsWnBbGdEN+++wHvK9IBL0gkZqEWmko5s2Bf8OUTCmeMGR8diSwJlq6VOsduxjKVx2fvJ95ofWrwhyxh9vMze+uTa/oqF75Rsdk5h7KDK777T298F3ypYp4z2GpAILalR9wrwYLqio3akipMp1DdLuuGgVFBXHqEFBhXGCgUq/V9LmQ1GGRpJaWNH+ISwwcTa250nOPu00+QSIPVjJvhHbBA7regTmYNZ83I33/Vv2nF7ZPKi6YGd02OBhZ6zzx6z2ACxPJ7PnZY3yh2U2HHz03+PYbgy9S0Qm6t4Lu2OWq/eTz43k6zlp0XvfzOf63uqsghGz2+hzJj1QIDAQAB",
   "description": "Capture job opportunities, LinkedIn profiles/posts, and contact details into Tandora.",
   "permissions": [
     "activeTab",
