@@ -5,18 +5,12 @@
 
 chrome.runtime.onInstalled.addListener((details) => {
   console.log("Tandora Prospect Capture extension installed/updated:", details.reason);
-  // Initialize default configuration in chrome.storage.local if not already set
-  chrome.storage.local.get(["backendUrl", "extensionSecret"], (res) => {
-    const defaults = {};
+  // Initialize default backend URL in chrome.storage.local if not already set.
+  // The secret is never hardcoded in source code; user configures it via the Settings tab.
+  chrome.storage.local.get(["backendUrl"], (res) => {
     if (!res.backendUrl) {
-      defaults.backendUrl = "http://127.0.0.1:8000";
-    }
-    if (!res.extensionSecret) {
-      defaults.extensionSecret = "tandora-secure-local-extension-token";
-    }
-    if (Object.keys(defaults).length > 0) {
-      chrome.storage.local.set(defaults, () => {
-        console.log("Tandora storage initialized with local defaults.");
+      chrome.storage.local.set({ backendUrl: "http://127.0.0.1:8000" }, () => {
+        console.log("Tandora storage initialized with local default backendUrl.");
       });
     }
   });
