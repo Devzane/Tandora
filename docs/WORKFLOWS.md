@@ -152,16 +152,30 @@ flowchart TD
     B --> C{Valid cached result exists?}
     C -->|Yes| D[Return cached status with expiry timestamp]
     C -->|No| E[Call Reoon API mode=power with REOON_API_KEY]
-    E --> F[Parse Reoon status: safe, catch_all, invalid, unknown, role_account, disposable]
+    E --> F[Parse Reoon status: safe, catch_all, role_account, invalid, unknown, disposable]
     F --> G[Insert record into email_verifications with 30-day expires_at]
-    G --> H{Status classification}
-    H -->|safe| I[Mark address eligible for outreach]
-    H -->|catch-all| J[Hold address: require explicit catch_all_approved = 1]
-    H -->|invalid / unknown / disposable| K[Permanently block address from outreach]
+    G --> H{Policy Classification}
+    H -->|safe / catch-all / role_account| I[Automatically approved: Eligible for outreach drafting]
+    H -->|invalid / unknown / disposable| K[Suppressed: Blocked from outreach; reversible via review]
     I --> L[Write audit_log: email_verified]
-    J --> L
     K --> L
 ```
+
+**Confirmed Stage 3 Email Classification Policy**:
+
+| Reoon classification | Future Tandora handling |
+|---|---|
+| safe | Automatically approved |
+| catch-all | Automatically approved; treated as safe |
+| role_account | Automatically approved; treated as safe |
+| invalid | Suppressed |
+| unknown | Suppressed |
+| disposable | Suppressed |
+
+**Policy Rules**:
+1. **Distinguish Failures**: Technical API failures and network timeouts must remain distinguishable from genuine Reoon `unknown` deliverability results.
+2. **Approval Gate Separation**: Deliverability verification approval does NOT authorize email sending. The existing requirement for explicit manual approval of every outbound email draft remains unchanged.
+3. **Reversible Suppression**: Suppression of invalid, unknown, or disposable addresses must remain reversible through an explicit manual review process in the UI.
 
 **Steps**:
 1. User triggers verification for an email address in the Local UI or via API `POST /api/v1/emails/{id}/verify`.
@@ -170,9 +184,8 @@ flowchart TD
 4. Reoon returns deliverability classification and credits used.
 5. Backend stores result in `email_verifications`.
 6. Routing:
-   - `safe`: marked ready for AI drafting.
-   - `catch-all`: held in review queue; local UI prompts user to click **"Approve Catch-All"** (`POST /api/v1/emails/{id}/approve-catchall`) before it can be used.
-   - `invalid`, `unknown`, `disposable`: blocked unconditionally.
+   - `safe`, `catch-all`, `role_account`: automatically approved and eligible for AI draft generation.
+   - `invalid`, `unknown`, `disposable`: suppressed and held from outreach, reversible via manual review.
 7. Event recorded in `audit_log`.
 
 ---
