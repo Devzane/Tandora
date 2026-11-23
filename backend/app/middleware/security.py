@@ -29,10 +29,10 @@ class LocalSecurityMiddleware(BaseHTTPMiddleware):
         # 2. State-Changing Request Origin / CSRF Defense
         if request.method not in SAFE_METHODS:
             origin = request.headers.get("origin")
-            
+
             if origin and origin.startswith("chrome-extension://"):
                 ext_id = origin.replace("chrome-extension://", "").split("/")[0].lower()
-                if ext_id != settings.chrome_extension_id.lower():
+                if not ext_id or ext_id != settings.chrome_extension_id.lower():
                     return JSONResponse(
                         status_code=403,
                         content={"detail": f"Unauthorized extension origin: '{origin}'."},
@@ -47,9 +47,16 @@ class LocalSecurityMiddleware(BaseHTTPMiddleware):
                     )
 
                 if origin:
-                    parsed_origin = urlparse(origin)
-                    origin_host = (parsed_origin.hostname or "").lower()
-                    if origin_host not in ALLOWED_HOSTS and origin_host != settings.fastapi_host:
+                    try:
+                        parsed_origin = urlparse(origin)
+                        origin_host = (parsed_origin.hostname or "").lower()
+                    except Exception:
+                        return JSONResponse(
+                            status_code=400,
+                            content={"detail": f"Malformed Origin header: '{origin}'."},
+                        )
+
+                    if not origin_host or (origin_host not in ALLOWED_HOSTS and origin_host != settings.fastapi_host):
                         return JSONResponse(
                             status_code=403,
                             content={"detail": f"Cross-origin request from '{origin}' is prohibited."},
@@ -57,9 +64,16 @@ class LocalSecurityMiddleware(BaseHTTPMiddleware):
 
                 referer = request.headers.get("referer")
                 if not origin and referer:
-                    parsed_referer = urlparse(referer)
-                    referer_host = (parsed_referer.hostname or "").lower()
-                    if referer_host not in ALLOWED_HOSTS and referer_host != settings.fastapi_host:
+                    try:
+                        parsed_referer = urlparse(referer)
+                        referer_host = (parsed_referer.hostname or "").lower()
+                    except Exception:
+                        return JSONResponse(
+                            status_code=400,
+                            content={"detail": f"Malformed Referer header: '{referer}'."},
+                        )
+
+                    if not referer_host or (referer_host not in ALLOWED_HOSTS and referer_host != settings.fastapi_host):
                         return JSONResponse(
                             status_code=403,
                             content={"detail": f"Cross-origin referer '{referer}' is prohibited."},
