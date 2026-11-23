@@ -184,7 +184,7 @@ One person operating the application locally on a Windows 11 laptop (16 GB RAM, 
 - **AC-02 (Local UI)**: The user can view metrics, browse entities, review drafts, approve sends, and manage suppressions via a local web interface at `http://127.0.0.1:8000`.
 - **AC-03 (Chrome Extension)**: Captures LinkedIn profiles, LinkedIn posts (preserving author distinction), and ContactOut/Apollo visible overlays with review popup and manual fallback under least-privilege permissions.
 - **AC-04 (Provenance)**: Every email and phone number record stores its individual source, source URL, and timestamp.
-- **AC-05 (Email Verification)**: Reoon verifies addresses with 30-day caching. Safe addresses are usable; catch-all addresses require manual approval; invalid addresses are blocked.
+- **AC-05 (Email Verification)**: Reoon verifies addresses with 30-day caching. Confirmed Stage 3 policy: `safe`, `catch-all`, and `role_account` are automatically approved; `invalid`, `unknown`, and `disposable` are suppressed (reversible via review). Technical API failures remain distinguished from unknown results. Verification approval does not authorize sending without manual draft approval.
 - **AC-06 (AI Drafting)**: Drafts generated with versioning using rich entity context. Provider switchable between Gemini and Ollama via config.
 - **AC-07 (Approval Hash Integrity)**: Approvals record a SHA-256 content hash. Any draft modification invalidates approval. Sends blocked if hash mismatches.
 - **AC-08 (Delivery Reliability)**: Persistent `send_attempts` lifecycle (`pending` $\rightarrow$ `sending` $\rightarrow$ `sent`/`failed`/`unknown`). Idempotency key prevents duplicate sends. No auto-resend on `unknown`. Dry-run mode supported.
