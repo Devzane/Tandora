@@ -1,5 +1,7 @@
 """Tests for REST API CRUD and Ingestion endpoints."""
 
+from app.config import get_settings
+
 
 def test_api_companies_crud(client):
     """Verify REST API endpoints for companies."""
@@ -177,7 +179,7 @@ def test_api_captures_ingestion(client):
     r = client.post(
         "/api/v1/captures/",
         json=payload,
-        headers={"X-Extension-Secret": "tandora-secure-local-extension-token"},
+        headers={"X-Extension-Secret": get_settings().extension_api_secret},
     )
     assert r.status_code == 201
     data = r.json()
