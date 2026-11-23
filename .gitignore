@@ -33,8 +33,14 @@ venv/
 ENV/
 env/
 
+# Security & Signing Keys
+*.pem
+*.key
+secrets/
+
 # Operating System & IDE
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+chrome_test_profile/
