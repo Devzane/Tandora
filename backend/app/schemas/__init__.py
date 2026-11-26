@@ -32,6 +32,11 @@ from app.schemas.capture import (
     OpportunityCaptureInput,
     ContactCaptureInput,
 )
+from app.schemas.email_verification import (
+    EmailVerificationResponse,
+    CatchAllApprovalResponse,
+    VerificationStatsResponse,
+)
 
 __all__ = [
     "PaginatedResponse",
@@ -59,4 +64,7 @@ __all__ = [
     "CompanyCaptureInput",
     "OpportunityCaptureInput",
     "ContactCaptureInput",
+    "EmailVerificationResponse",
+    "CatchAllApprovalResponse",
+    "VerificationStatsResponse",
 ]
