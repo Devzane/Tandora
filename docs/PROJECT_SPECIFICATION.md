@@ -70,7 +70,7 @@ One person operating the application locally on a Windows 11 laptop (16 GB RAM, 
 - **FR-18**: Track and log Reoon API credit consumption.
 
 ### 3.4 AI Draft Generation
-- **FR-19**: Generate personalized initial and follow-up drafts using the Gemini API (`gemini-1.5-flash`), with optional fallback to local Ollama (`llama3.2`).
+- **FR-19**: Generate personalized initial and follow-up drafts using the Gemini API (`gemini-3.5-flash-lite` default; Gemini 1.5 Flash retired; `gemini-3.8-flash` alternative via config), with optional fallback to local Ollama (`llama3.2`).
 - **FR-20**: Abstract LLM providers through a common interface; switchable via configuration without code modifications.
 - **FR-21**: Every generation creates a new draft version. Historical versions remain immutable.
 - **FR-22**: Prompt template injects organization, opportunity, contact background, notes, and post context.
