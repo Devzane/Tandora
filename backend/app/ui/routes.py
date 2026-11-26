@@ -1,5 +1,6 @@
 """Server-Rendered Local Web UI Routes."""
 
+import logging
 from pathlib import Path
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Request, Form, status
@@ -44,6 +45,13 @@ from app.services.contact_service import (
     set_email_suppression,
     add_phone_number,
 )
+from app.services.verification_service import (
+    verify_email_address,
+    approve_catch_all,
+    get_verification_stats,
+)
+
+logger = logging.getLogger(__name__)
 
 templates_path = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(templates_path))
@@ -84,6 +92,9 @@ def dashboard_view(request: Request, db: Session = Depends(get_db)):
     config_paused = db.get(AppConfig, "sending_paused")
     sending_paused = config_paused.value.lower() == "true" if config_paused else False
 
+    # Verification statistics
+    verification_stats = get_verification_stats(db)
+
     # Recent audit logs
     audit_logs = db.execute(
         select(AuditLog).order_by(AuditLog.created_at.desc()).limit(8)
@@ -102,6 +113,10 @@ def dashboard_view(request: Request, db: Session = Depends(get_db)):
             "daily_limit": settings.daily_sending_limit,
             "sending_paused": sending_paused,
             "dry_run": settings.dry_run,
+            "unapproved_catchalls": 0,
+            "suppressed_by_verification": verification_stats["suppressed_by_verification"],
+            "approved_active_count": verification_stats["approved_active_count"],
+            "total_credits_used": verification_stats["total_credits_used"],
             "audit_logs": audit_logs,
         },
     )
@@ -380,6 +395,12 @@ def contact_detail_view(contact_id: int, request: Request, db: Session = Depends
     if contact.duplicate_flag and contact.duplicate_of_contact_id:
         candidate = get_contact(db, contact.duplicate_of_contact_id)
 
+    email_verifications = {}
+    if contact.emails:
+        for em in contact.emails:
+            latest = sorted(em.verifications, key=lambda v: v.verified_at, reverse=True) if em.verifications else []
+            email_verifications[em.id] = latest[0] if latest else None
+
     return templates.TemplateResponse(
         request=request,
         name="contact_detail.html",
@@ -387,6 +408,7 @@ def contact_detail_view(contact_id: int, request: Request, db: Session = Depends
             "active_tab": "contacts",
             "contact": contact,
             "candidate_contact": candidate,
+            "email_verifications": email_verifications,
         },
     )
 
@@ -429,6 +451,39 @@ def contact_email_suppress_action(
     """Toggle email address suppression."""
     set_email_suppression(db, email_id, bool(suppressed), reason)
     db.commit()
+    return RedirectResponse(url=f"/contacts/{contact_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/contacts/{contact_id}/emails/{email_id}/verify")
+def contact_email_verify_action(
+    contact_id: int,
+    email_id: int,
+    force: int = Form(0),
+    db: Session = Depends(get_db),
+):
+    """Trigger Reoon verification or cache refresh for an email address."""
+    try:
+        verify_email_address(db, email_id, force=bool(force))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error("Error verifying email %d from UI: %s", email_id, e)
+    return RedirectResponse(url=f"/contacts/{contact_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/contacts/{contact_id}/emails/{email_id}/approve-catchall")
+def contact_email_approve_catchall_action(
+    contact_id: int,
+    email_id: int,
+    db: Session = Depends(get_db),
+):
+    """Manually approve a verified catch-all address from UI."""
+    try:
+        approve_catch_all(db, email_id)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error("Error approving catch-all for email %d from UI: %s", email_id, e)
     return RedirectResponse(url=f"/contacts/{contact_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
