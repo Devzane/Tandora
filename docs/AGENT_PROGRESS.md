@@ -122,14 +122,151 @@
 
 ---
 
+---
+
+## Issue 2: Reoon Email Verification Integration & Policy Corrections
+
+- **Status**: Completed & Verified
+- **Implementation & Correction Details**:
+  1. **Approved Verification Policy Enforced**:
+     - **Automatic Approval**: `safe`, `catch_all`, and `role_account` are automatically approved (`is_address_usable = True`). For `catch_all`, `catch_all_approved` is automatically set to `1`. No manual review or approval required.
+     - **Automatic Suppression**: `invalid`, `unknown`, `disposable`, `spamtrap`, `disabled`, and `inbox_full` (pending recovery policy) are automatically suppressed (`email_addresses.suppressed = 1`).
+     - **Address Usability Guard (`is_address_usable`)**: Evaluates `status in ("safe", "catch_all", "role_account")` and verifies the address is not suppressed and verification has not expired. All suppressed, invalid, unknown, disposable, spamtrap, disabled, inbox-full, or unverified addresses return `False`.
+     - **Cleaned UI & APIs**: Removed redundant manual approval buttons and endpoints (`approve_catch_all`) that existed solely for the rejected manual gate. Updated `dashboard.html` to track "Suppressed Addresses" and credit usage, and `contact_detail.html` to clearly badge all 9 Power Mode statuses.
+  2. **Complete Reoon Power Mode Status Mapping (`DOCUMENTED_POWER_MODE_STATUSES`)**:
+     - All 9 documented Power Mode statuses are accounted for:
+       - `safe` -> `safe` (Approved)
+       - `catch_all` -> `catch_all` (Approved)
+       - `role_account` -> `role_account` (Approved)
+       - `invalid` -> `invalid` (Suppressed)
+       - `unknown` -> `unknown` (Suppressed)
+       - `disposable` -> `disposable` (Suppressed)
+       - `spamtrap` -> `spamtrap` (Suppressed)
+       - `disabled` -> `disabled` (Suppressed)
+       - `inbox_full` -> `inbox_full` (Suppressed pending recovery policy)
+     - Explicit handling for unexpected provider statuses: mapped safely to `unknown`, suppressed, and flagged via warning log.
+     - Preserves complete raw provider payload in `email_verifications.reoon_response` for auditing.
+  3. **Configurable Timeout & Technical Failure Isolation**:
+     - Added `reoon_timeout_seconds: float = Field(default=90.0, ...)` to `Settings` (`backend/app/config.py`, `backend/.env`, `backend/.env.example`).
+     - Reoon Power Mode requests timeout after 90 seconds (configurable for long-running deep SMTP checks).
+     - Catch `httpx.TimeoutException` explicitly, raising `ReoonAPIError`.
+     - Timeouts, HTTP errors, network drops, and missing credentials raise `ReoonAPIError` and are recorded strictly as technical failures.
+     - **No False Classifications**: Technical failures are never recorded as `unknown`, do not create partial records in `email_verifications`, and do not alter `email_addresses.suppressed`.
+  4. **Credit Accounting Logic**:
+     - Accurately distinguishes between verification requests attempted, successful responses, and credits consumed according to Reoon's billing policy:
+       - Conclusive verification (`safe`, `invalid`, `disabled`, `disposable`, `inbox_full`, `catch_all`, `role_account`, `spamtrap`): consumes 1 credit.
+       - Inconclusive verification (`unknown`): consumes 0 credits (Reoon waives/refunds credits for inconclusive results).
+       - Technical failures / timeouts: consume 0 credits.
+     - Raw API responses preserved for audit and reconciliation.
+  5. **Automated Tests (`backend/tests/test_email_verification.py`)**:
+     - 21 comprehensive tests covering:
+       - Automatic approval of `safe`, `catch_all`, and `role_account`.
+       - Automatic suppression of `invalid`, `unknown`, `disposable`, `spamtrap`, `disabled`, and `inbox_full`.
+       - All 9 documented Reoon Power Mode statuses.
+       - Unexpected provider response mapping and handling.
+       - Configurable timeout handling and exception isolation.
+       - Technical failure isolation (HTTP errors, timeouts, invalid payloads do not touch database or suppress address).
+       - Credit accounting (0 for unknown, 1 for conclusive).
+       - 30-day cache lifecycle, cache hits, cache bypass (`force=True`), and cache expiration.
+       - Usability matrix verification for outreach safety.
+  6. **Security & Concurrency Fixes Implemented**:
+     - **Fix 1: Keyed-Lock Concurrency Synchronization (`backend/app/services/verification_service.py`)**:
+       - Implemented `KeyedMutexRegistry` providing thread-safe, reference-counted locks keyed by `email_address_id`.
+       - Prunes lock entries automatically upon completion to prevent unbounded memory growth.
+       - Implemented double-checked locking: when a request acquires the mutex, it invalidates its session cache (`db.expire_all()`) and checks the 30-day cache again.
+       - If a concurrent request completed verification, the waiting thread immediately reuses the committed result (`was_cached=True`) without calling the external Reoon API or consuming credits.
+       - Guarantees `db.commit()` occurs before releasing the mutex.
+       - Scope limitation: In-process synchronization for single-process architectures (does not claim cross-process / multi-host distribution).
+     - **Fix 2: Reoon Credential Leakage Prevention (`backend/app/integrations/reoon.py`)**:
+       - Replaced direct logging of `httpx.HTTPStatusError` and `httpx.RequestError` objects.
+       - Stripped request URLs and query parameters (`key=<API_KEY>`) from log statements.
+       - Raising `ReoonAPIError` outside `except` blocks detaches underlying `httpx` exceptions from `__context__` entirely (`__context__ is None`), in addition to `__suppress_context__ = True` via `raise ... from None`.
+       - Implemented `_sanitize_provider_reason()` to explicitly redact API keys, URLs, and query parameters from provider-returned error reason strings (`{"status": "error", "reason": "..."}`).
+       - Logs only sanitized HTTP status codes (`logger.error("Reoon API request failed with HTTP status %d", status_code)`) and connection error class names.
+- **Files Created / Modified**:
+  - `backend/app/config.py` (added `reoon_timeout_seconds`)
+  - `backend/.env` & `backend/.env.example`
+  - `backend/app/integrations/reoon.py` (`_sanitize_provider_reason`, credential sanitization, `__context__` detachment)
+  - `backend/app/services/verification_service.py` (`KeyedMutexRegistry`, double-checked caching, transaction boundary commit, restored policy, 9-status mapping, credit accounting)
+  - `backend/app/schemas/email_verification.py` (updated stats schema and credit reconciliation description)
+  - `backend/app/api/v1/email_verification.py` (removed manual catch-all gate endpoint, updated verification flow)
+  - `backend/app/ui/routes.py`
+  - `backend/app/templates/contact_detail.html`
+  - `backend/app/templates/dashboard.html`
+  - `backend/tests/test_email_verification.py` (added concurrency, lock lifecycle, edge-case, and credential protection regression tests)
+  - `docs/AGENT_PROGRESS.md`
+- **Tests Executed and Results**:
+  - Focused command: `.venv\Scripts\pytest -c backend/pyproject.toml backend/tests/test_email_verification.py -v` -> 34 passed in 5.65s.
+  - Full suite command: `.venv\Scripts\pytest -c backend/pyproject.toml backend/tests -v` -> 115 passed in 13.30s (100% pass rate, 0 failures, 0 warnings).
+
+---
+
+## Stage 4, Task 1: LLM Provider Abstraction and Clients
+
+- **Status**: Completed
+- **Implementation Scope**:
+  1. **Provider Abstraction (`backend/app/providers/llm_interface.py`)**:
+     - Defined `LLMProvider` runtime protocol with `generate(prompt: str) -> DraftResult` contract.
+     - Implemented immutable frozen dataclass `DraftResult` (`text`, `provider`, `model`, `raw_prompt`) with `.content` and `.model_used` convenience aliases.
+     - Defined `LLMGenerationError(Exception)` for unified generation failure handling across providers.
+  2. **Google Gemini REST Client (`backend/app/integrations/gemini.py`)**:
+     - Official REST endpoint `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`.
+     - Secure header-based authentication using `x-goog-api-key` (API key never placed in URL or query params).
+     - Configurable model (default `gemini-3.5-flash-lite`, with `gemini-3.8-flash` supported as alternative; Gemini 1.5 Flash retired), configurable timeout (default 60.0s).
+     - Prompt validation rejecting empty or whitespace-only inputs.
+     - Defensive parsing of response candidates, safety finish-reasons, and error payloads.
+     - Credential sanitization in error messages, redacting keys, URLs, and control characters.
+     - Exception context detachment (`raise ... from None` with variable decoupling) to ensure `__context__ is None`.
+  3. **Local Ollama REST Client (`backend/app/integrations/ollama.py`)**:
+     - Local REST endpoint `POST {base_url}/api/generate` with `stream: False`.
+     - Configurable `ollama_base_url` (default `http://127.0.0.1:11434`), model (default `llama3.2`), and timeout (default 60.0s).
+     - Graceful handling of local service unavailability (`httpx.ConnectError`), timeouts, HTTP errors, and malformed responses.
+     - Same immutable `DraftResult` return contract.
+  4. **Provider Factory (`backend/app/providers/llm_factory.py`)**:
+     - `get_llm_provider(provider_name: str | None = None, **kwargs) -> LLMProvider`.
+     - Resolves configured provider (`settings.llm_provider`) by default or explicit per-request override.
+     - Case-insensitive resolution for `"gemini"` and `"ollama"`.
+     - Rejects unsupported providers with descriptive `ValueError`.
+     - Lazy credential validation: missing Gemini API key raises `MissingCredentialError` at resolution time without crashing app startup.
+     - Does not mutate global application settings during per-request provider selection.
+  5. **Configuration (`backend/app/config.py` & `backend/.env.example`)**:
+     - Added `gemini_model` (default `"gemini-3.5-flash-lite"`; Gemini 1.5 Flash retired; `gemini-3.8-flash` alternative).
+     - Added `ollama_model` (default `"llama3.2"`).
+     - Added `llm_timeout_seconds` (default `60.0`).
+     - Maintained existing `ollama_base_url` (`"http://127.0.0.1:11434"`).
+  6. **Automated Testing (`backend/tests/test_llm_providers.py`)**:
+     - 21 focused tests covering protocol conformance, DraftResult immutability, default model verification (`gemini-3.5-flash-lite`), explicit model overrides (`gemini-3.8-flash`), Gemini headers/endpoints/errors/safety/sanitization, Ollama local generation/unavailability/timeouts, factory runtime selection, case insensitivity, and credential protection.
+     - Zero live network calls (100% mocked HTTP transport).
+- **Files Created / Modified**:
+  - `backend/app/config.py`
+  - `backend/.env.example`
+  - `backend/app/providers/__init__.py`
+  - `backend/app/providers/llm_interface.py`
+  - `backend/app/providers/llm_factory.py`
+  - `backend/app/integrations/__init__.py`
+  - `backend/app/integrations/gemini.py`
+  - `backend/app/integrations/ollama.py`
+  - `backend/tests/test_llm_providers.py`
+  - `docs/ARCHITECTURE.md`
+  - `docs/PROJECT_SPECIFICATION.md`
+  - `docs/DATABASE_SCHEMA.md`
+  - `docs/AGENT_PROGRESS.md`
+- **Tests Executed and Results**:
+  - Focused command: `.venv\Scripts\pytest -c backend/pyproject.toml backend/tests/test_llm_providers.py -v` -> 21 passed in 1.95s.
+  - Full suite command: `.venv\Scripts\pytest -c backend/pyproject.toml backend/tests -v` -> 136 passed (100% pass rate, 0 failures, 0 warnings).
+
+---
+
 ## Current Status
 
-- **Current Stage**: Issue 1 — Chrome Extension Identity & Authentication Restriction
-- **Current Task**: Task 3 Completed (Issue 1 fully resolved and verified)
+- **Current Stage**: Stage 4 — AI Draft Generation Engine
+- **Current Task**: Task 1 Completed (Provider Abstraction and Clients)
 - **Outstanding Work**:
-  - Issue 2: Reoon Email Verification Integration & Caching Lifecycle
-  - Subsequent Stages (Stage 3+)
+  - Stage 4, Task 2: Prompt Templates and Context Assembly
+  - Stage 4, Task 3: Draft Generation Service and Persistence
+  - Stage 4, Task 4: UI Integration and Manual Review
+  - Subsequent Stages (Stages 5 to 9)
 - **Exact Next Action**:
-  - Await user instructions before starting Issue 2.
+  - Await user review and authorization before proceeding to Stage 4, Task 2.
 - **Any Unresolved Errors**:
   - None.
