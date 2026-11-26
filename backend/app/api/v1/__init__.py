@@ -5,11 +5,13 @@ from app.api.v1.companies import router as companies_router
 from app.api.v1.opportunities import router as opportunities_router
 from app.api.v1.contacts import router as contacts_router
 from app.api.v1.captures import router as captures_router
+from app.api.v1.email_verification import router as email_verification_router
 
 api_v1_router = APIRouter(prefix="/api/v1")
 api_v1_router.include_router(companies_router)
 api_v1_router.include_router(opportunities_router)
 api_v1_router.include_router(contacts_router)
 api_v1_router.include_router(captures_router)
+api_v1_router.include_router(email_verification_router)
 
 __all__ = ["api_v1_router"]
