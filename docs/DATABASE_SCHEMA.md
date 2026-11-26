@@ -277,7 +277,7 @@ PRAGMA journal_mode = WAL;
 | `subject` | TEXT | NOT NULL | Email subject line |
 | `body` | TEXT | NOT NULL | Email body text |
 | `llm_provider` | TEXT | | `gemini` or `ollama` |
-| `llm_model` | TEXT | | LLM model identifier (e.g., `gemini-1.5-flash`) |
+| `llm_model` | TEXT | | LLM model identifier (e.g., `gemini-3.5-flash-lite`) |
 | `generation_prompt` | TEXT | | Prompt used for generation (audit context) |
 | `is_edited` | INTEGER | NOT NULL, DEFAULT 0 | 1 = Draft was manually edited by user |
 | `created_at` | DATETIME | NOT NULL, DEFAULT now | Creation timestamp |
