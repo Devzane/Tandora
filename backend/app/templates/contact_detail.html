@@ -97,12 +97,14 @@
         <th>Email Address</th>
         <th>Source</th>
         <th>Captured At</th>
-        <th>Status</th>
+        <th>Verification</th>
+        <th>Delivery Status</th>
         <th>Action</th>
       </tr>
     </thead>
     <tbody>
       {% for email in contact.emails %}
+      {% set verif = email_verifications.get(email.id) if email_verifications else None %}
       <tr>
         <td>
           <code>{{ email.address }}</code>
@@ -111,20 +113,62 @@
         <td><span class="badge badge-info">{{ email.source }}</span></td>
         <td style="font-size: 0.8rem; color: var(--text-muted);">{{ email.captured_at.strftime('%Y-%m-%d %H:%M') }}</td>
         <td>
+          {% if verif %}
+            {% if verif.status == 'safe' %}
+              <span class="badge badge-success">SAFE</span>
+            {% elif verif.status == 'catch-all' %}
+              <span class="badge badge-success">CATCH-ALL</span>
+            {% elif verif.status == 'role_account' %}
+              <span class="badge badge-info">ROLE ACCOUNT</span>
+            {% elif verif.status == 'invalid' %}
+              <span class="badge badge-danger">INVALID</span>
+            {% elif verif.status == 'disabled' %}
+              <span class="badge badge-danger">DISABLED</span>
+            {% elif verif.status == 'disposable' %}
+              <span class="badge badge-danger">DISPOSABLE</span>
+            {% elif verif.status == 'spamtrap' %}
+              <span class="badge badge-danger">SPAMTRAP</span>
+            {% elif verif.status == 'inbox_full' %}
+              <span class="badge badge-warning">INBOX FULL</span>
+            {% elif verif.status == 'unknown' %}
+              <span class="badge badge-neutral">UNKNOWN</span>
+            {% else %}
+              <span class="badge badge-neutral">{{ verif.status }}</span>
+            {% endif %}
+            <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.2rem;">
+              Expires: {{ verif.expires_at.strftime('%Y-%m-%d') }}
+            </div>
+          {% else %}
+            <span class="badge badge-neutral">UNVERIFIED</span>
+          {% endif %}
+        </td>
+        <td>
           {% if email.suppressed %}
             <span class="badge badge-danger">SUPPRESSED</span>
+            {% if email.suppressed_reason %}
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.2rem;">{{ email.suppressed_reason }}</div>
+            {% endif %}
           {% else %}
             <span class="badge badge-success">ACTIVE</span>
           {% endif %}
         </td>
         <td>
-          <form action="/contacts/{{ contact.id }}/emails/{{ email.id }}/suppress" method="POST" style="display: inline;">
-            <input type="hidden" name="suppressed" value="{% if email.suppressed %}0{% else %}1{% endif %}">
-            <input type="hidden" name="reason" value="Toggled from contact email list">
-            <button type="submit" class="btn btn-sm {% if email.suppressed %}btn-secondary{% else %}btn-danger{% endif %}">
-              {% if email.suppressed %}Unsuppress{% else %}Suppress{% endif %}
-            </button>
-          </form>
+          <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;">
+            <form action="/contacts/{{ contact.id }}/emails/{{ email.id }}/verify" method="POST" style="display: inline;">
+              <input type="hidden" name="force" value="{% if verif %}1{% else %}0{% endif %}">
+              <button type="submit" class="btn btn-sm btn-primary">
+                {% if verif %}Re-verify{% else %}Verify{% endif %}
+              </button>
+            </form>
+
+            <form action="/contacts/{{ contact.id }}/emails/{{ email.id }}/suppress" method="POST" style="display: inline;">
+              <input type="hidden" name="suppressed" value="{% if email.suppressed %}0{% else %}1{% endif %}">
+              <input type="hidden" name="reason" value="Toggled from contact email list">
+              <button type="submit" class="btn btn-sm {% if email.suppressed %}btn-secondary{% else %}btn-danger{% endif %}">
+                {% if email.suppressed %}Unsuppress{% else %}Suppress{% endif %}
+              </button>
+            </form>
+          </div>
         </td>
       </tr>
       {% endfor %}
