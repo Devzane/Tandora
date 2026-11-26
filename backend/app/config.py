@@ -40,10 +40,26 @@ class Settings(BaseSettings):
     # AI / LLM Configuration
     llm_provider: str = "gemini"
     gemini_api_key: str | None = None
+    gemini_model: str = Field(
+        default="gemini-3.5-flash-lite",
+        description="Google Gemini model identifier for outreach draft generation (default: gemini-3.5-flash-lite; gemini-3.8-flash supported as higher-tier alternative).",
+    )
     ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = Field(
+        default="llama3.2",
+        description="Local Ollama model identifier for offline draft generation.",
+    )
+    llm_timeout_seconds: float = Field(
+        default=60.0,
+        description="HTTP request timeout in seconds for LLM generation calls.",
+    )
 
     # Reoon Email Verification
     reoon_api_key: str | None = None
+    reoon_timeout_seconds: float = Field(
+        default=90.0,
+        description="Timeout in seconds for Reoon Power Mode verification requests (Reoon recommends >=60s).",
+    )
 
     # Zoho Mail (SMTP / IMAP)
     zoho_smtp_host: str = "smtp.zoho.com"
