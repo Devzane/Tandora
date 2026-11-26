@@ -125,7 +125,7 @@ def get_contact(db: Session, contact_id: int) -> Contact | None:
         select(Contact)
         .options(
             selectinload(Contact.roles),
-            selectinload(Contact.emails),
+            selectinload(Contact.emails).selectinload(EmailAddress.verifications),
             selectinload(Contact.phones),
             selectinload(Contact.company),
         )
@@ -148,7 +148,7 @@ def list_contacts(
         select(Contact)
         .options(
             selectinload(Contact.roles),
-            selectinload(Contact.emails),
+            selectinload(Contact.emails).selectinload(EmailAddress.verifications),
             selectinload(Contact.phones),
             selectinload(Contact.company),
         )
