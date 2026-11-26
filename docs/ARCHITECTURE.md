@@ -114,7 +114,7 @@ The application binds strictly to `127.0.0.1:8000`. No cloud infrastructure, con
 
 **Responsibilities**:
 - Generates tailored outreach drafts using entity context (organization description, opportunity requirements, contact background, notes, post content).
-- Implements `LLMProvider` protocol interface for zero-code-change switching between cloud Gemini (`gemini-1.5-flash`) and local Ollama (`llama3.2`).
+- Implements `LLMProvider` protocol interface for zero-code-change switching between cloud Gemini (`gemini-3.5-flash-lite`, with `gemini-3.8-flash` supported via configuration) and local Ollama (`llama3.2`).
 - Validates structured output and prevents hallucinated placeholders.
 
 ### 2.10 Reoon Email Verifier Integration
@@ -150,7 +150,7 @@ The application binds strictly to `127.0.0.1:8000`. No cloud infrastructure, con
 | Persistence | SQLite | 3.40+ | Zero-cost, serverless, atomic transactions, embedded local file |
 | Scheduling | APScheduler | 3.10+ | Lightweight in-process job scheduling backed by SQLite records |
 | Browser Extension | Chrome Manifest V3 | MV3 | Modern standard, isolated service workers, least-privilege permissions |
-| AI Drafting (Primary) | Gemini API | 1.5 Flash | Fast, free tier available, excellent structured output compliance |
+| AI Drafting (Primary) | Gemini API | gemini-3.5-flash-lite | Fast, cost-conscious default (Gemini 1.5 Flash retired; gemini-3.8-flash configurable alternative) |
 | AI Drafting (Optional) | Ollama | Local | Fully offline, zero-cost fallback for local LLM execution |
 | Email Deliverability | Reoon API | v1 | Reliable deliverability verification, catch-all detection, credit efficiency |
 | Email Delivery | Zoho SMTP | TLS 587 | Standard business email transport with STARTTLS encryption |
@@ -189,7 +189,7 @@ graph TD
     end
 
     subgraph External["External Services"]
-        GEMINI["Gemini API\n(gemini-1.5-flash)"]
+        GEMINI["Gemini API\n(gemini-3.5-flash-lite)"]
         OLLAMA["Ollama Local\n(llama3.2 Optional)"]
         REOON["Reoon Verifier API\n(30-day Cache)"]
         ZOHO_SMTP["Zoho SMTP\n(TLS Port 587)"]
