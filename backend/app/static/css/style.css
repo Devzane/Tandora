@@ -151,6 +151,15 @@ main {
   background-color: var(--danger-hover);
 }
 
+.btn-warning {
+  background-color: var(--warning);
+  color: #ffffff;
+}
+
+.btn-warning:hover {
+  background-color: #b45309;
+}
+
 .btn-sm {
   padding: 0.25rem 0.6rem;
   font-size: 0.8rem;
