@@ -1,7 +1,7 @@
 """Draft SQLAlchemy Model."""
 
 from datetime import datetime, timezone
-from sqlalchemy import Integer, String, Text, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Integer, String, Text, DateTime, ForeignKey, UniqueConstraint, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -24,6 +24,14 @@ class Draft(Base):
 
     __table_args__ = (
         UniqueConstraint("outreach_thread_id", "draft_type", "followup_number", "version", name="uq_drafts_thread_version"),
+        Index(
+            "uq_drafts_initial_version",
+            "outreach_thread_id",
+            "draft_type",
+            "version",
+            unique=True,
+            sqlite_where=text("draft_type = 'initial' AND followup_number IS NULL"),
+        ),
     )
 
     thread = relationship("OutreachThread", back_populates="drafts")
