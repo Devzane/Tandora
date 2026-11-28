@@ -257,16 +257,92 @@
 
 ---
 
+## Stage 4, Task 2: Context Assembly and Prompt Engine
+
+- **Status**: Completed
+- **Implementation Scope**:
+  1. **Context Assembly (`backend/app/services/draft_service.py`)**:
+     - Implemented `assemble_context(db, thread_id) -> AssembledContext` retrieving structured context for an existing `OutreachThread`:
+       - **Company** (`CompanyContext`): `name`, `description`, `industry`, `website` (falls back to contact's company when opportunity company is absent).
+       - **Opportunity** (`OpportunityContext`): `title`, `type`, `description`, `source_url`.
+       - **Contact** (`ContactContext`): `full_name`, `first_name`, `headline`, `notes`, deduplicated sorted `roles` (`ContactRole`). Explicitly excludes recipient email addresses, phone numbers, and unnecessary PII.
+       - **LinkedIn Evidence** (`LinkedInEvidence`): deduplicated `post_text`, `author_headline`, `post_url` (scoped to `opportunity_id == opp.id` or unattached `author_contact_id == contact.id` to avoid cross-opportunity leakage).
+     - Preserves missing optional fields as `None` / empty tuples without fabricating data.
+     - Exposes `has_sufficient_context` and JSON-serializable `to_dict()` for user review alongside generated drafts.
+  2. **Prompt Construction & Injection Defense (`build_prompt`)**:
+     - Enforces a strict three-paragraph outreach structure (personalized opening, relevant business problem/opportunity without stating unverified assumptions as facts, concise sender contribution + CTA) and anti-hallucination rules (never invent clients, results, statistics, interactions, qualifications, or capabilities; avoid generic flattery; never disclose that the message was derived from a job post, LinkedIn profile, or captured data).
+     - Handles sparse/insufficient context via an explicit trusted `SPARSE CONTEXT DIRECTIVE` instructing a brief, exploratory message without fabrication.
+     - Isolates `<TRUSTED_SYSTEM_RULES>`, optional `<USER_STYLE_PREFERENCES>`, `<UNTRUSTED_REFERENCE_DATA>`, and `<OUTPUT_FORMAT>` using unique XML-style delimiter tags, stripping unsafe control characters and escaping embedded delimiter breakouts (`[TAG_REMOVED]`).
+     - Designates all retrieved database fields (company descriptions, contact notes, opportunity descriptions, LinkedIn posts) and custom generation instructions as untrusted inputs that cannot override core rules or factual accuracy.
+  3. **Structured Output Parsing & Validation (`parse_draft_output`, `validate_draft`, `generate_draft_from_context`)**:
+     - `parse_draft_output()` defensively handles raw JSON, single Markdown-fenced JSON blocks, and minor surrounding prose/extra keys, while rejecting missing fields, non-string types, empty values, malformed JSON, multiple code fences, and ambiguous multi-object outputs via `DraftValidationError(LLMGenerationError, ValueError)`.
+     - `validate_draft()` validates non-empty single-line `subject` (5–150 characters), `body` (50–2,500 characters), exactly 3 paragraphs, absence of null bytes/header newlines in subject, and rejection of unresolved placeholders (`[COMPANY]`, `[NAME]`, `[RECIPIENT]`, `[INSERT]`, `[Company Name]`, `{{name}}`, `{company}`, `<NAME>`, `TODO`, `TBD`, `FIXME`, and generic uppercase bracketed tokens).
+     - `generate_draft_from_context()` connects `build_prompt`, `get_llm_provider`/`LLMProvider`, `parse_draft_output`, and `validate_draft` uniformly for both Gemini and Ollama without persisting drafts or modifying thread state.
+  4. **Service Exports (`backend/app/services/__init__.py`)**:
+     - Exported `AssembledContext`, `CompanyContext`, `ContactContext`, `DraftValidationError`, `GeneratedDraftPreview`, `LinkedInEvidence`, `OpportunityContext`, `assemble_context`, `build_prompt`, `generate_draft_from_context`, `parse_draft_output`, and `validate_draft`.
+  5. **Automated Tests (`backend/tests/test_draft_service.py`)**:
+     - Added 57 unit/integration tests (with 100% mocked LLM HTTP transport; zero live API calls and zero draft DB persistence) covering all 20 required scenarios plus boundary, security, delimiter-escape, provider-contract, and log-redaction checks.
+- **Files Created / Modified**:
+  - `backend/app/services/draft_service.py`
+  - `backend/app/services/__init__.py`
+  - `backend/tests/test_draft_service.py`
+  - `docs/AGENT_PROGRESS.md`
+- **Tests Executed and Results**:
+  - Focused command: `.venv\Scripts\pytest -c backend/pyproject.toml backend/tests/test_draft_service.py -v` -> 57 passed in 2.16s.
+  - Full suite command: `.venv\Scripts\pytest -c backend/pyproject.toml backend/tests -v` -> 193 passed in 12.03s (0 failed, 0 skipped, 0 warnings).
+- **Known Limitations**:
+  - Prompt injection cannot be eliminated completely through prompt boundaries alone; structural delimiters and instructions reduce risk, and human review of generated drafts against the preserved `AssembledContext` remains mandatory.
+  - Automated placeholder and structural validation checks formatting, length bounds, paragraph count, and common template tokens, but cannot guarantee factual accuracy or absence of hallucinations.
+  - `contact_roles` in the current schema stores role/department descriptors in a single `role` column (no separate `department` database column exists).
+  - Draft persistence, versioning, manual editing, REST endpoints, and UI integration are scoped for Stage 4 Tasks 3–4.
+
+---
+
+## Stage 4, Task 3: Thread Initialization, Draft Persistence and Version Management
+
+- **Status**: Completed
+- **Implementation Scope**:
+  1. **Database Constraints & Reversible Alembic Migration (`backend/app/models/draft.py`, `backend/alembic/versions/7f420d53dd47_add_partial_unique_index_for_initial_.py`)**:
+     - Added SQLite partial unique index `uq_drafts_initial_version` on `drafts (outreach_thread_id, draft_type, version) WHERE draft_type = 'initial' AND followup_number IS NULL` to close SQLite's `NULL != NULL` uniqueness gap while preserving `followup_number = NULL` for initial drafts and keeping `uq_drafts_thread_version` intact for follow-up drafts.
+     - Verified Alembic `upgrade head` (`4a386b6fd0d9 -> 7f420d53dd47`), `downgrade -1` (`7f420d53dd47 -> 4a386b6fd0d9`), and re-`upgrade head` cleanly.
+  2. **Thread Initialization & Eligibility Validation (`backend/app/services/draft_service.py`)**:
+     - Implemented `validate_recipient_eligibility()` checking entity existence, email-to-contact ownership (`email_obj.contact_id == contact.id`), multi-level suppression (`contact`, `opportunity.company`, `contact.company`, `email_address`), and `is_address_usable()` (preserving Stage 3 policy: `safe`, `catch-all`, `role_account` usable when unexpired; rejecting `invalid`, `unknown`, `disposable`, `spamtrap`, `disabled`, `inbox_full`, unverified, and expired).
+     - Implemented `initialize_outreach_thread()` returning existing thread idempotently when `selected_email_address_id` matches, raising `ThreadConflictError` if a different email is requested (never silently replacing the recipient), and protecting against concurrent races via `BEGIN IMMEDIATE` + `uq_outreach_threads_opp_contact`.
+  3. **Persistent Draft Generation & Atomic Versioning (`generate_and_persist_draft`, `redact_prompt_for_audit`)**:
+     - Validates thread status (`suppressed`, `replied`, `bounced`, `closed`, `sending` blocked; `sent` blocked for `initial` drafts) and rechecks recipient eligibility both before calling the LLM provider and inside the write transaction.
+     - Runs `assemble_context()`, `build_prompt()`, `LLMProvider.generate()`, `parse_draft_output()`, and `validate_draft()` outside database write locks.
+     - Stores `redact_prompt_for_audit()` in `Draft.generation_prompt`, replacing all retrieved database fields and custom instructions with `[REDACTED]` / `[REDACTED_CUSTOM_INSTRUCTIONS]`.
+     - Serializes version allocation per `(outreach_thread_id, draft_type, followup_number)` via auxiliary in-process `KeyedMutexRegistry` (`_draft_lock_registry`) plus SQLite `BEGIN IMMEDIATE` write transactions (or nested savepoints when inside an active caller-managed transaction), always setting `is_edited=0`. Failed generation never persists a draft or consumes a version number.
+  4. **Draft & Thread Retrieval (`get_outreach_thread`, `get_draft`, `list_draft_versions`, `get_latest_draft`)**:
+     - Implemented deterministic ordering and strict isolation between `initial` (`followup_number IS NULL`) and `followup` (`1..3`) drafts.
+  5. **Append-Only Audit Logging**:
+     - Records `outreach_thread_created`, `draft_generated`, and `draft_generation_failed` events using `write_audit_log()`, storing only structural IDs/provider/model/error-class metadata and excluding API keys, credentials, email addresses, contact notes, complete prompts, and full generated bodies.
+  6. **Service Exports & Tests (`backend/app/services/__init__.py`, `backend/tests/test_draft_persistence.py`)**:
+     - Added 36 tests covering all 27 required scenarios (thread init, idempotency, conflicts, ownership, multi-level suppression, Stage 3 verification policy, initial/follow-up persistence, version isolation, failure non-consumption, historical immutability, retrieval, concurrent multi-thread allocation, audit redaction, transaction rollback & caller-tx safety, partial unique index enforcement, and Alembic upgrade/downgrade roundtrip).
+- **Files Created / Modified**:
+  - `backend/app/models/draft.py`
+  - `backend/alembic/versions/7f420d53dd47_add_partial_unique_index_for_initial_.py`
+  - `backend/app/services/draft_service.py`
+  - `backend/app/services/__init__.py`
+  - `backend/tests/test_draft_persistence.py`
+  - `docs/AGENT_PROGRESS.md`
+- **Tests Executed and Results**:
+  - Focused command: `.\.venv\Scripts\pytest -c backend/pyproject.toml backend/tests/test_draft_persistence.py -v` -> 36 passed in 11.77s.
+  - Full suite command: `.\.venv\Scripts\pytest -c backend/pyproject.toml backend/tests -v` -> 229 passed in 36.74s (0 failed, 0 skipped, 0 warnings).
+- **Known Limitations**:
+  - In-process `KeyedMutexRegistry` reduces thread contention inside one Python process; cross-process concurrency relies on SQLite `BEGIN IMMEDIATE` write-lock serialization and database uniqueness constraints (`uq_drafts_initial_version`, `uq_drafts_thread_version`, `uq_outreach_threads_opp_contact`).
+  - Manual draft editing, approval SHA-256 hashing, SMTP sending, REST endpoints, and UI views remain out of scope and deferred to subsequent tasks/stages.
+
+---
+
 ## Current Status
 
 - **Current Stage**: Stage 4 — AI Draft Generation Engine
-- **Current Task**: Task 1 Completed (Provider Abstraction and Clients)
+- **Current Task**: Task 3 Completed (Thread Initialization, Draft Persistence and Version Management)
 - **Outstanding Work**:
-  - Stage 4, Task 2: Prompt Templates and Context Assembly
-  - Stage 4, Task 3: Draft Generation Service and Persistence
   - Stage 4, Task 4: UI Integration and Manual Review
   - Subsequent Stages (Stages 5 to 9)
 - **Exact Next Action**:
-  - Await user review and authorization before proceeding to Stage 4, Task 2.
+  - Await user review and authorization before proceeding to Stage 4, Task 4.
 - **Any Unresolved Errors**:
   - None.
